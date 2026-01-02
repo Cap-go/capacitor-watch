@@ -1,42 +1,87 @@
 # @capgo/capacitor-watch
+ <a href="https://capgo.app/"><img src='https://raw.githubusercontent.com/Cap-go/capgo/main/assets/capgo_banner.png' alt='Capgo - Instant updates for capacitor'/></a>
+
+<div align="center">
+  <h2><a href="https://capgo.app/?ref=plugin_watch"> ➡️ Get Instant updates for your App with Capgo</a></h2>
+  <h2><a href="https://capgo.app/consulting/?ref=plugin_watch"> Missing a feature? We'll build the plugin for you 💪</a></h2>
+</div>
 
 Apple Watch communication plugin for Capacitor with bidirectional messaging support.
 
-<a href="https://capgo.app/"><img src='https://raw.githubusercontent.com/AntoineDly/Aurehon-frontend/refs/heads/main/public/images/capgo_banner.webp' alt='Capgo - Instant updates for capacitor'/></a>
+## Why Capacitor Watch?
 
-<div class="dropdown">
-  <a href="https://capgo.app/">Capgo</a> — Live updates, build hosting, and analytics for Capacitor apps — no App Store review needed.
-</div>
+The only Capacitor 8 compatible plugin for **bidirectional Apple Watch communication**:
 
-## Features
+- **Two-way messaging** - Send and receive messages between iPhone and Apple Watch
+- **Application context** - Sync app state with latest-value-only semantics
+- **User info transfers** - Reliable queued delivery even when watch is offline
+- **Request/Reply pattern** - Interactive workflows with callback-based responses
+- **SwiftUI ready** - Includes watch-side SDK with ObservableObject support
+- **iOS 15+** - Built for modern iOS with Swift Package Manager
 
-- *Bidirectional messaging* — Send and receive messages between iPhone and Apple Watch
-- *Application context* — Sync app state with latest-value-only semantics
-- *User info transfers* — Queue reliable data transfers that deliver even when watch is offline
-- *Reply handling* — Respond to watch requests with callback-based replies
-- *Reachability monitoring* — Track watch connectivity status in real-time
-- *iOS 15+ support* — Built for modern iOS with Swift Package Manager
+Essential for health apps, fitness trackers, remote controls, and any app extending to Apple Watch.
 
-## Requirements
+## Documentation
 
-- iOS 15.0+
-- Capacitor 8.0+
-- watchOS app with WatchConnectivity integration
+The most complete doc is available here: https://capgo.app/docs/plugins/watch/
 
-> **Note:** This plugin only works on iOS. Android builds will compile but all methods will reject with "Apple Watch is only supported on iOS".
-
-## Installation
+## Install
 
 ```bash
 npm install @capgo/capacitor-watch
 npx cap sync
 ```
 
-### iOS Setup
+## Requirements
 
-1. Add the Watch Connectivity capability to your iOS app in Xcode
-2. Create a watchOS app target in your Xcode project
-3. Implement the watch-side connectivity code using WatchConnectivity framework
+- **iOS**: iOS 15.0+ (Capacitor 8 minimum). Requires WatchConnectivity capability.
+- **watchOS**: watchOS 9.0+. Requires companion app with CapgoWatchSDK.
+- **Android**: Not supported (Apple Watch is iOS-only). Methods return appropriate errors.
+
+## Watch App Setup
+
+Your watchOS app needs the `CapgoWatchSDK` Swift package. Add it to your watch target:
+
+1. In Xcode, File > Add Package Dependencies
+2. Enter: `https://github.com/Cap-go/capacitor-watch.git`
+3. Add `CapgoWatchSDK` to your watchOS target (from the `watch-sdk` directory)
+
+### SwiftUI Watch App Example
+
+```swift
+import SwiftUI
+import CapgoWatchSDK
+
+@main
+struct MyWatchApp: App {
+    init() {
+        WatchConnector.shared.activate()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+struct ContentView: View {
+    @ObservedObject var connector = WatchConnector.shared
+
+    var body: some View {
+        VStack {
+            Text(connector.isReachable ? "Connected" : "Disconnected")
+
+            Button("Send to Phone") {
+                connector.sendMessage(["action": "hello"]) { reply in
+                    print("Reply: \(reply)")
+                }
+            }
+            .disabled(!connector.isReachable)
+        }
+    }
+}
+```
 
 ## API
 
@@ -434,114 +479,10 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{ [P in K]: T; }</code>
 
 </docgen-api>
 
-## Usage Examples
-
-### Send a Message to Watch
-
-```typescript
-import { CapgoWatch } from '@capgo/capacitor-watch';
-
-// Check if watch is reachable first
-const info = await CapgoWatch.getInfo();
-if (info.isReachable) {
-  await CapgoWatch.sendMessage({
-    data: { action: 'refresh', timestamp: Date.now() }
-  });
-}
-```
-
-### Receive Messages from Watch
-
-```typescript
-import { CapgoWatch } from '@capgo/capacitor-watch';
-
-// Listen for messages
-await CapgoWatch.addListener('messageReceived', (event) => {
-  console.log('Message from watch:', event.message);
-});
-
-// Listen for messages that need a reply
-await CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
-  const result = await processRequest(event.message);
-  await CapgoWatch.replyToMessage({
-    callbackId: event.callbackId,
-    data: { result }
-  });
-});
-```
-
-### Sync Application State
-
-```typescript
-import { CapgoWatch } from '@capgo/capacitor-watch';
-
-// Update context (latest value only)
-await CapgoWatch.updateApplicationContext({
-  context: { theme: 'dark', userId: '123' }
-});
-
-// Transfer user info (queued, reliable delivery)
-await CapgoWatch.transferUserInfo({
-  userInfo: { recordId: '456', action: 'created' }
-});
-```
-
-### Monitor Connectivity
-
-```typescript
-import { CapgoWatch } from '@capgo/capacitor-watch';
-
-await CapgoWatch.addListener('reachabilityChanged', (event) => {
-  console.log('Watch reachable:', event.isReachable);
-});
-
-await CapgoWatch.addListener('activationStateChanged', (event) => {
-  // 0 = notActivated, 1 = inactive, 2 = activated
-  console.log('Session state:', event.state);
-});
-```
-
-## Watch App Implementation
-
-Your watchOS app needs to implement WatchConnectivity. Here's a basic example:
-
-```swift
-import WatchConnectivity
-
-class WatchViewModel: NSObject, ObservableObject, WCSessionDelegate {
-    static let shared = WatchViewModel()
-
-    override init() {
-        super.init()
-        if WCSession.isSupported() {
-            WCSession.default.delegate = self
-            WCSession.default.activate()
-        }
-    }
-
-    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        // Handle message from iPhone
-        print("Received: \(message)")
-    }
-
-    func sendToPhone(_ data: [String: Any]) {
-        guard WCSession.default.isReachable else { return }
-        WCSession.default.sendMessage(data, replyHandler: nil)
-    }
-
-    // Required delegate methods
-    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
-}
-```
-
 ## Credits
 
-This plugin is based on the enhanced WatchConnectivity implementation from [CapacitorWatchEnhanced](https://github.com/macsupport/CapacitorWatchEnhanced), which added bidirectional messaging support to the original Ionic watch plugin.
-
-## License
-
-MPL-2.0
+Based on the enhanced WatchConnectivity implementation from [CapacitorWatchEnhanced](https://github.com/macsupport/CapacitorWatchEnhanced).
