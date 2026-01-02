@@ -1,0 +1,10 @@
+{
+  "appId": "app.capgo.watch",
+  "appName": "Watch Example",
+  "webDir": "dist",
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  }
+}
