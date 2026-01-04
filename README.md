@@ -8,6 +8,8 @@
 
 Apple Watch communication plugin for Capacitor with bidirectional messaging support.
 
+
+
 ## Why Capacitor Watch?
 
 The only Capacitor 8 compatible plugin for **bidirectional Apple Watch communication**:
@@ -479,10 +481,13 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{
+ [P in K]: T;
+ }</code>
 
 </docgen-api>
 
 ## Credits
 
 Based on the enhanced WatchConnectivity implementation from [CapacitorWatchEnhanced](https://github.com/macsupport/CapacitorWatchEnhanced).
+Who was a fork of the offical [CapacitorWatch](https://github.com/ionic-team/CapacitorWatch)
