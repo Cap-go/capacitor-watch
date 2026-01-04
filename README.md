@@ -838,9 +838,7 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{
- [P in K]: T;
- }</code>
+<code>{ [P in K]: T; }</code>
 
 </docgen-api>
 
