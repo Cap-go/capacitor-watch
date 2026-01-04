@@ -8,8 +8,6 @@
 
 Apple Watch communication plugin for Capacitor with bidirectional messaging support.
 
-
-
 ## Why Capacitor Watch?
 
 The only Capacitor 8 compatible plugin for **bidirectional Apple Watch communication**:
@@ -39,24 +37,136 @@ npx cap sync
 - **iOS**: iOS 15.0+ (Capacitor 8 minimum). Requires WatchConnectivity capability.
 - **watchOS**: watchOS 9.0+. Requires companion app with CapgoWatchSDK.
 - **Android**: Not supported (Apple Watch is iOS-only). Methods return appropriate errors.
+- **Hardware**: Real Apple Watch required - simulators do not support WatchConnectivity.
 
-## Watch App Setup
+---
 
-Your watchOS app needs the `CapgoWatchSDK` Swift package. Add it to your watch target:
+## Complete Setup Tutorial
 
-1. In Xcode, File > Add Package Dependencies
-2. Enter: `https://github.com/Cap-go/capacitor-watch.git`
-3. Add `CapgoWatchSDK` to your watchOS target (from the `watch-sdk` directory)
+This tutorial walks you through setting up bidirectional communication between your Capacitor app and Apple Watch. Follow each step carefully.
 
-### SwiftUI Watch App Example
+### Step 1: Install the Plugin
+
+First, add the plugin to your Capacitor project:
+
+```bash
+npm install @capgo/capacitor-watch
+npx cap sync ios
+```
+
+Then open your iOS project in Xcode:
+
+```bash
+npx cap open ios
+```
+
+### Step 2: Add iOS App Capabilities
+
+Your iOS app needs specific capabilities to communicate with Apple Watch.
+
+1. Select your **App target** in Xcode (not the project)
+2. Go to the **Signing & Capabilities** tab
+3. Click the **+ Capability** button
+
+![Add capability in Xcode](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/add-capability.png)
+
+4. Add the following capabilities:
+   - **Background Modes** - Enable "Background fetch" and "Remote notifications"
+   - **Push Notifications** (required for background wake)
+
+Your capabilities should look like this when complete:
+
+![Final capabilities configuration](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/capabilities-final.png)
+
+### Step 3: Configure AppDelegate.swift
+
+Open your `ios/App/App/AppDelegate.swift` file and add the WatchConnectivity setup:
+
+```swift
+import UIKit
+import Capacitor
+import WatchConnectivity
+import CapgoCapacitorWatch
+
+@UIApplicationMain
+class AppDelegate: UIResponder, UIApplicationDelegate {
+
+    var window: UIWindow?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Initialize WatchConnectivity session
+        if WCSession.isSupported() {
+            WCSession.default.delegate = CapWatchSessionDelegate.shared
+            WCSession.default.activate()
+        }
+        return true
+    }
+
+    // ... rest of your AppDelegate code
+}
+```
+
+### Step 4: Create the Watch App Target
+
+Now create the watchOS companion app:
+
+1. In Xcode, go to **File > New > Target**
+2. Select **watchOS** tab
+3. Choose **App** and click Next
+
+![Create watch target](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-watch.png)
+
+4. Configure the watch app:
+   - **Product Name**: Your app name (e.g., "MyApp Watch")
+   - **Bundle Identifier**: Must follow the pattern `[your-app-bundle-id].watchkitapp`
+     - Example: If your app is `com.example.myapp`, use `com.example.myapp.watchkitapp`
+   - **Language**: Swift
+   - **User Interface**: SwiftUI
+
+![Watch target options](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-target-options.png)
+
+### Step 5: Add the CapgoWatchSDK Package
+
+The watch app needs our SDK to communicate with the phone. Add it as a Swift Package:
+
+1. Select your **project** in the navigator (top level, blue icon)
+2. Go to **Package Dependencies** tab
+3. Click the **+** button to add a package
+
+![Project package dependencies](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-project-dependancies.png)
+
+4. In the search field, enter:
+   ```
+   https://github.com/Cap-go/capacitor-watch.git
+   ```
+
+5. Click **Add Package**
+
+![Add local SPM package](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-add-local.png)
+
+6. When prompted, select **CapgoWatchSDK** and add it to your **Watch App target** (not the main app)
+
+![Pick target for package](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-pick-target.png)
+
+After adding, your package dependencies should show the CapgoWatchSDK:
+
+![SPM finished](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-finished.png)
+
+### Step 6: Configure the Watch App
+
+Update your watch app's main file to initialize the connection:
+
+**MyAppWatch/MyAppWatchApp.swift:**
 
 ```swift
 import SwiftUI
+import WatchConnectivity
 import CapgoWatchSDK
 
 @main
-struct MyWatchApp: App {
+struct MyAppWatchApp: App {
     init() {
+        // Activate the watch connector
         WatchConnector.shared.activate()
     }
 
@@ -66,20 +176,267 @@ struct MyWatchApp: App {
         }
     }
 }
+```
+
+**MyAppWatch/ContentView.swift:**
+
+```swift
+import SwiftUI
+import CapgoWatchSDK
 
 struct ContentView: View {
     @ObservedObject var connector = WatchConnector.shared
 
     var body: some View {
-        VStack {
-            Text(connector.isReachable ? "Connected" : "Disconnected")
+        VStack(spacing: 20) {
+            // Connection status indicator
+            HStack {
+                Circle()
+                    .fill(connector.isReachable ? Color.green : Color.red)
+                    .frame(width: 12, height: 12)
+                Text(connector.isReachable ? "Connected" : "Disconnected")
+                    .font(.caption)
+            }
 
+            // Send message button
             Button("Send to Phone") {
-                connector.sendMessage(["action": "hello"]) { reply in
-                    print("Reply: \(reply)")
+                connector.sendMessage(["action": "buttonTapped", "timestamp": Date().timeIntervalSince1970]) { reply in
+                    print("Phone replied: \(reply)")
                 }
             }
             .disabled(!connector.isReachable)
+
+            // Display received context
+            if let context = connector.receivedContext {
+                Text("Last update: \(context["status"] as? String ?? "none")")
+                    .font(.caption2)
+            }
+        }
+        .padding()
+    }
+}
+```
+
+Your watch app structure should look like this:
+
+![Watch sources added](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-sources-added.png)
+
+### Step 7: Add Watch App Capabilities
+
+The watch app also needs background capabilities:
+
+1. Select your **Watch App target** in Xcode
+2. Go to **Signing & Capabilities** tab
+3. Click **+ Capability**
+4. Add **Background Modes**
+5. Enable **Remote Notifications**
+
+![Watch remote notifications capability](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-remote-not.png)
+
+### Step 8: Use the Plugin in Your Capacitor App
+
+Now set up the JavaScript side in your Capacitor app:
+
+```typescript
+import { Watch } from '@capgo/capacitor-watch';
+
+// Check watch connectivity status
+async function checkWatchStatus() {
+  const info = await Watch.getInfo();
+  console.log('Watch supported:', info.isSupported);
+  console.log('Watch paired:', info.isPaired);
+  console.log('Watch app installed:', info.isWatchAppInstalled);
+  console.log('Watch reachable:', info.isReachable);
+}
+
+// Listen for messages from watch
+Watch.addListener('messageReceived', (event) => {
+  console.log('Message from watch:', event.message);
+  // Handle the message (e.g., event.message.action === 'buttonTapped')
+});
+
+// Listen for messages that need a reply
+Watch.addListener('messageReceivedWithReply', async (event) => {
+  console.log('Watch asking:', event.message);
+
+  // Send reply back to watch
+  await Watch.replyToMessage({
+    callbackId: event.callbackId,
+    data: { response: 'acknowledged', processed: true }
+  });
+});
+
+// Listen for connection changes
+Watch.addListener('reachabilityChanged', (event) => {
+  console.log('Watch reachable:', event.isReachable);
+  // Update UI to show connection status
+});
+
+// Send data to watch (latest value wins)
+async function updateWatchContext(data: Record<string, unknown>) {
+  await Watch.updateApplicationContext({ context: data });
+}
+
+// Send message to watch (requires watch to be reachable)
+async function sendMessageToWatch(data: Record<string, unknown>) {
+  await Watch.sendMessage({ data });
+}
+
+// Queue data for reliable delivery (even when watch is offline)
+async function queueDataForWatch(data: Record<string, unknown>) {
+  await Watch.transferUserInfo({ userInfo: data });
+}
+```
+
+### Step 9: Build and Run
+
+Use the target dropdown in Xcode to switch between building for your phone or watch:
+
+![Target dropdown](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-dropdown.png)
+
+**Build order:**
+1. First, build and run the **iOS App** on your iPhone
+2. Then, build and run the **Watch App** on your Apple Watch
+
+**Important Notes:**
+- You must use real devices - simulators do not support WatchConnectivity
+- Both apps must be running for bidirectional communication
+- The watch app will show "Disconnected" until the phone app is active
+
+---
+
+## Communication Methods
+
+Choose the right method for your use case:
+
+| Method | Use Case | Delivery | Watch Must Be Reachable |
+|--------|----------|----------|-------------------------|
+| `sendMessage()` | Real-time interaction | Immediate | Yes |
+| `updateApplicationContext()` | Sync app state | Latest value only | No |
+| `transferUserInfo()` | Important data | Queued, in order | No |
+
+### Example: Complete Communication Flow
+
+```typescript
+import { Watch } from '@capgo/capacitor-watch';
+
+class WatchService {
+  private isReachable = false;
+
+  async initialize() {
+    // Check initial status
+    const info = await Watch.getInfo();
+    this.isReachable = info.isReachable;
+
+    // Monitor reachability
+    Watch.addListener('reachabilityChanged', (event) => {
+      this.isReachable = event.isReachable;
+    });
+
+    // Handle incoming messages
+    Watch.addListener('messageReceived', (event) => {
+      this.handleWatchMessage(event.message);
+    });
+
+    // Handle request/reply messages
+    Watch.addListener('messageReceivedWithReply', async (event) => {
+      const reply = await this.processWatchRequest(event.message);
+      await Watch.replyToMessage({
+        callbackId: event.callbackId,
+        data: reply
+      });
+    });
+  }
+
+  async syncAppState(state: Record<string, unknown>) {
+    // Always works - queues if watch is unreachable
+    await Watch.updateApplicationContext({ context: state });
+  }
+
+  async sendInteractiveMessage(data: Record<string, unknown>) {
+    if (!this.isReachable) {
+      console.log('Watch not reachable, queueing message');
+      await Watch.transferUserInfo({ userInfo: data });
+      return;
+    }
+    await Watch.sendMessage({ data });
+  }
+
+  private handleWatchMessage(message: Record<string, unknown>) {
+    // Process message from watch
+    console.log('Watch action:', message.action);
+  }
+
+  private async processWatchRequest(message: Record<string, unknown>) {
+    // Process and return reply
+    return { status: 'ok', timestamp: Date.now() };
+  }
+}
+```
+
+---
+
+## SwiftUI Watch App Examples
+
+### Basic Watch UI
+
+![Example watch UI](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/example-watchui.png)
+
+### Advanced Watch App with Data Display
+
+```swift
+import SwiftUI
+import CapgoWatchSDK
+
+struct ContentView: View {
+    @ObservedObject var connector = WatchConnector.shared
+    @State private var lastMessage = "No messages yet"
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                // Status header
+                StatusView(isConnected: connector.isReachable)
+
+                Divider()
+
+                // Action buttons
+                Button("Request Data") {
+                    connector.sendMessage(["action": "requestData"]) { reply in
+                        if let status = reply["status"] as? String {
+                            lastMessage = "Got: \(status)"
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!connector.isReachable)
+
+                Button("Send Tap") {
+                    connector.sendMessage(["action": "tap", "time": Date().timeIntervalSince1970])
+                }
+                .disabled(!connector.isReachable)
+
+                Divider()
+
+                // Message display
+                Text(lastMessage)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+        }
+    }
+}
+
+struct StatusView: View {
+    let isConnected: Bool
+
+    var body: some View {
+        HStack {
+            Image(systemName: isConnected ? "iphone.radiowaves.left.and.right" : "iphone.slash")
+                .foregroundColor(isConnected ? .green : .red)
+            Text(isConnected ? "Phone Connected" : "Phone Disconnected")
+                .font(.caption)
         }
     }
 }
