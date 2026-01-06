@@ -117,3 +117,61 @@ pre#plugin-output {
 div.action-description {
   color: #cbd5f5;
 }
+
+h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 1.2rem;
+  color: #e2e8f0;
+}
+
+.hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+
+.event-log {
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 12px;
+  padding: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.log-placeholder {
+  color: #64748b;
+  font-style: italic;
+  text-align: center;
+  padding: 1rem;
+}
+
+.log-entry {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  flex-wrap: wrap;
+}
+
+.log-entry:last-child {
+  border-bottom: none;
+}
+
+.log-time {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.log-type {
+  color: #22d3ee;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.log-data {
+  color: #e2e8f0;
+  word-break: break-all;
+  flex: 1;
+}

@@ -5,6 +5,37 @@ import { CapgoWatch } from '@capgo/capacitor-watch';
 const plugin = CapgoWatch;
 const state = {};
 
+// Helper function to update the event log display
+function updateEventLog(eventType, data) {
+  const logContainer = document.getElementById('event-log');
+  if (!logContainer) return;
+
+  // Clear placeholder if present
+  const placeholder = logContainer.querySelector('.log-placeholder');
+  if (placeholder) {
+    placeholder.remove();
+  }
+
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+
+  const time = new Date().toLocaleTimeString();
+  const dataStr = typeof data === 'object' ? JSON.stringify(data) : String(data);
+
+  entry.innerHTML = `
+    <span class="log-time">${time}</span>
+    <span class="log-type">${eventType}</span>
+    <span class="log-data">${dataStr}</span>
+  `;
+
+  logContainer.insertBefore(entry, logContainer.firstChild);
+
+  // Keep only last 20 entries
+  while (logContainer.children.length > 20) {
+    logContainer.removeChild(logContainer.lastChild);
+  }
+}
+
 
 const actions = [
 {
@@ -66,34 +97,60 @@ return result || 'User info queued';
 {
   id: 'setup-listeners',
   label: 'Setup Event Listeners',
-  description: 'Sets up listeners for all watch events. Check console for events.',
+  description: 'Sets up listeners for all watch events and auto-replies to watch messages.',
   inputs: [],
   run: async (values) => {
     await plugin.addListener('messageReceived', (event) => {
       console.log('messageReceived:', event);
       state.lastMessage = event;
+      updateEventLog('Message received', event.message);
     });
-    await plugin.addListener('messageReceivedWithReply', (event) => {
+    await plugin.addListener('messageReceivedWithReply', async (event) => {
       console.log('messageReceivedWithReply:', event);
       state.lastMessageWithReply = event;
+      updateEventLog('Message with reply', event.message);
+
+      // Auto-reply based on action
+      const action = event.message?.action;
+      let replyData = { received: true, timestamp: Date.now() };
+
+      if (action === 'ping') {
+        replyData = { pong: true, timestamp: Date.now() };
+      } else if (action === 'requestData') {
+        replyData = {
+          status: 'ok',
+          data: { counter: event.message?.counter || 0, processed: true },
+          timestamp: Date.now()
+        };
+      }
+
+      await plugin.replyToMessage({
+        callbackId: event.callbackId,
+        data: replyData
+      });
+      console.log('Replied to watch:', replyData);
     });
     await plugin.addListener('applicationContextReceived', (event) => {
       console.log('applicationContextReceived:', event);
       state.lastContext = event;
+      updateEventLog('Context received', event.context);
     });
     await plugin.addListener('userInfoReceived', (event) => {
       console.log('userInfoReceived:', event);
       state.lastUserInfo = event;
+      updateEventLog('User info received', event.userInfo);
     });
     await plugin.addListener('reachabilityChanged', (event) => {
       console.log('reachabilityChanged:', event);
       state.isReachable = event.isReachable;
+      updateEventLog('Reachability', { isReachable: event.isReachable });
     });
     await plugin.addListener('activationStateChanged', (event) => {
       console.log('activationStateChanged:', event);
       state.activationState = event.state;
+      updateEventLog('Activation state', { state: event.state });
     });
-    return 'All listeners setup. Check console for events.';
+    return 'All listeners setup with auto-reply. Watch for events in the log below.';
   },
 },
 {

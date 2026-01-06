@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+  <defs>
+    <clipPath id="letter-clip-0">
+      <path d="M 545 257 L 697 257 Q 690 195 663 147 Q 636 99 594.5 66.5 Q 553 34 500.5 17 Q 448 0 389 0 Q 307 0 241.5 29 Q 176 58 131 109 Q 86 160 62 228.5 Q 38 297 38 377 Q 38 455 62 522.5 Q 86 590 131 640 Q 176 690 241.5 718.5 Q 307 747 389 747 Q 455 747 510 727 Q 565 707 606 669 Q 647 631 672 577 Q 697 523 703 456 L 551 456 Q 542 528 501.5 572 Q 461 616 389 616 Q 336 616 299 595.5 Q 262 575 239 541 Q 216 507 205.5 464.5 Q 195 422 195 377 Q 195 330 205.5 286 Q 216 242 239 207.5 Q 262 173 299 152.5 Q 336 132 389 132 Q 418 132 444.5 141.5 Q 471 151 492 168 Q 513 185 527 207.5 Q 541 230 545 257 Z" transform="translate(5.625,7.500) scale(0.049,0.114)" />
+    </clipPath>
+    <clipPath id="letter-clip-1">
+      <path d="M 749 714 L 941 0 L 787 0 L 670 492 L 668 492 L 546 0 L 399 0 L 275 486 L 273 486 L 160 0 L 3 0 L 192 714 L 351 714 L 470 228 L 472 228 L 593 714 Z" transform="translate(45.764,9.378) scale(0.049,0.114)" />
+    </clipPath>
+  </defs>
+  <rect x="0" y="0" width="50" height="50" fill="#F3F3E0" />
+  <rect x="50" y="0" width="50" height="50" fill="#27548A" />
+  <rect x="0" y="50" width="50" height="50" fill="#183B4E" />
+  <rect x="50" y="50" width="50" height="50" fill="#DDA853" />
+  <g clip-path="url(#letter-clip-0)">
+    <path d="M 0 0 H 100 V 50 H 0 Z" fill="#0c0c1f" />
+    <path d="M 0 50 H 100 V 100 H 0 Z" fill="#e7c4b1" />
+  </g>
+  <g clip-path="url(#letter-clip-1)">
+    <path d="M 0 0 H 100 V 50 H 0 Z" fill="#d8ab75" />
+    <path d="M 0 50 H 100 V 100 H 0 Z" fill="#2257ac" />
+  </g>
+</svg>
