@@ -80,13 +80,14 @@ Your capabilities should look like this when complete:
 
 ### Step 3: Configure AppDelegate.swift
 
-Open your `ios/App/App/AppDelegate.swift` file and add the WatchConnectivity setup:
+> [!NOTE] 
+> For now this will not compile. This is fine, we will fix in later steps
 
 ```swift
 import UIKit
 import Capacitor
 import WatchConnectivity
-import CapgoCapacitorWatch
+import CapgoWatchSDK
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -135,22 +136,38 @@ The watch app needs our SDK to communicate with the phone. Add it as a Swift Pac
 
 ![Project package dependencies](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-project-dependancies.png)
 
-4. In the search field, enter:
-   ```
-   https://github.com/Cap-go/capacitor-watch.git
-   ```
+4. Click on the plus button to add a package
+
+![Plus button](./docs/plus_button.png)
 
 5. Click **Add Package**
 
-![Add local SPM package](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-add-local.png)
+
+![Add local SPM package](./docs/add_watch_sdk.png)
 
 6. When prompted, select **CapgoWatchSDK** and add it to your **Watch App target** (not the main app)
 
-![Pick target for package](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-pick-target.png)
+![Pick target for package](./docs/target.png)
 
 After adding, your package dependencies should show the CapgoWatchSDK:
 
-![SPM finished](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-finished.png)
+![SPM finished](./docs/added.png)
+
+### Step 6: Fix the build for main app
+
+Right now, your main app is missing the CapgoWatchSDK. We need to add it to the main app.
+
+1. Select your project in the navigator (top level, blue icon)
+2. Go to your iOS app target
+3. Go to `general`
+4. Scroll to `Frameworks, Libraries, and Embedded Content`
+5. Click the plus button to add a framework
+
+![Add framework](./docs/add_framework.png)
+
+7. Click on the `CapgoWatchSDK` framework and click `Add`
+
+![Add framework](./docs/add_framework_2.png)
 
 ### Step 6: Configure the Watch App
 
@@ -838,7 +855,9 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{
+ [P in K]: T;
+ }</code>
 
 </docgen-api>
 
