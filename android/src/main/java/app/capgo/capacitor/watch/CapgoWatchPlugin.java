@@ -14,7 +14,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "CapgoWatch")
 public class CapgoWatchPlugin extends Plugin {
 
-    private final String pluginVersion = "8.0.7";
+    private final String pluginVersion = "8.0.8";
     private static final String NOT_SUPPORTED_MSG = "Apple Watch is only supported on iOS";
 
     @PluginMethod
