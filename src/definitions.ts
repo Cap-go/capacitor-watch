@@ -64,22 +64,28 @@ export interface ReplyMessageOptions {
 }
 
 /**
- * Information about Watch connectivity status.
+ * Information about Watch / Wear OS connectivity status.
  *
  * @since 8.0.0
  */
 export interface WatchInfo {
   /**
-   * Whether WatchConnectivity is supported on this device.
-   * Always false on iPad, web, and Android.
+   * Whether the watch communication API is supported on this device.
+   * - iOS: false on iPad; true on iPhone when WatchConnectivity is available.
+   * - Android: true when Google Play Services with Wear OS support is available; false otherwise.
+   * - Web: always false.
    */
   isSupported: boolean;
   /**
-   * Whether an Apple Watch is paired with this iPhone.
+   * Whether a watch is currently paired/connected.
+   * - iOS: whether an Apple Watch is paired with this iPhone.
+   * - Android: whether at least one Wear OS node is currently connected.
    */
   isPaired: boolean;
   /**
-   * Whether the paired watch has the companion app installed.
+   * Whether the watch companion app is installed.
+   * - iOS: whether the paired Apple Watch has the companion app installed.
+   * - Android: whether at least one connected Wear OS node is reachable (used as a proxy).
    */
   isWatchAppInstalled: boolean;
   /**
@@ -87,8 +93,9 @@ export interface WatchInfo {
    */
   isReachable: boolean;
   /**
-   * The current activation state of the WCSession.
-   * 0 = notActivated, 1 = inactive, 2 = activated
+   * The current session activation state.
+   * - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState).
+   * - Android: 2 when a Wear OS node is connected, 0 otherwise.
    */
   activationState: number;
 }
@@ -171,8 +178,12 @@ export interface ActivationStateChangedEvent {
 }
 
 /**
- * Apple Watch communication plugin for Capacitor.
- * Provides bidirectional messaging between iPhone and Apple Watch using WatchConnectivity.
+ * Watch / Wear OS communication plugin for Capacitor.
+ * Provides bidirectional messaging between the phone and a paired watch.
+ *
+ * - **iOS**: uses Apple WatchConnectivity framework to communicate with Apple Watch.
+ * - **Android**: uses Google Wear OS Data Layer API (play-services-wearable) to communicate with a Wear OS watch.
+ * - **Web**: not supported; all methods throw or return safe defaults.
  *
  * @since 8.0.0
  */

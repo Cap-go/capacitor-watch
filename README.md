@@ -495,8 +495,12 @@ struct StatusView: View {
 <docgen-api>
 <!--Update the source file JSDoc comments and rerun docgen to update the docs below-->
 
-Apple Watch communication plugin for Capacitor.
-Provides bidirectional messaging between iPhone and Apple Watch using WatchConnectivity.
+Watch / Wear OS communication plugin for Capacitor.
+Provides bidirectional messaging between the phone and a paired watch.
+
+- **iOS**: uses Apple WatchConnectivity framework to communicate with Apple Watch.
+- **Android**: uses Google Wear OS Data Layer API (play-services-wearable) to communicate with a Wear OS watch.
+- **Web**: not supported; all methods throw or return safe defaults.
 
 ### sendMessage(...)
 
@@ -778,15 +782,15 @@ Options for replying to a message from the watch.
 
 #### WatchInfo
 
-Information about Watch connectivity status.
+Information about Watch / Wear OS connectivity status.
 
-| Prop                      | Type                 | Description                                                                                    |
-| ------------------------- | -------------------- | ---------------------------------------------------------------------------------------------- |
-| **`isSupported`**         | <code>boolean</code> | Whether WatchConnectivity is supported on this device. Always false on iPad, web, and Android. |
-| **`isPaired`**            | <code>boolean</code> | Whether an Apple Watch is paired with this iPhone.                                             |
-| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the paired watch has the companion app installed.                                      |
-| **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                              |
-| **`activationState`**     | <code>number</code>  | The current activation state of the WCSession. 0 = notActivated, 1 = inactive, 2 = activated   |
+| Prop                      | Type                 | Description                                                                                                                                                                                                                                                   |
+| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`isSupported`**         | <code>boolean</code> | Whether the watch communication API is supported on this device. - iOS: false on iPad; true on iPhone when WatchConnectivity is available. - Android: true when Google Play Services with Wear OS support is available; false otherwise. - Web: always false. |
+| **`isPaired`**            | <code>boolean</code> | Whether a watch is currently paired/connected. - iOS: whether an Apple Watch is paired with this iPhone. - Android: whether at least one Wear OS node is currently connected.                                                                                 |
+| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one connected Wear OS node is reachable (used as a proxy).                                                   |
+| **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                                                                                                                                                                                             |
+| **`activationState`**     | <code>number</code>  | The current session activation state. - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState). - Android: 2 when a Wear OS node is connected, 0 otherwise.                                                                            |
 
 
 #### PluginListenerHandle
