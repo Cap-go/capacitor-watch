@@ -38,133 +38,141 @@ function updateEventLog(eventType, data) {
   }
 }
 
-
 const actions = [
-{
-              id: 'get-info',
-              label: 'Get Watch Info',
-              description: 'Calls getInfo() to discover watch connectivity status.',
-              inputs: [],
-              run: async (values) => {
-                const info = await plugin.getInfo();
-return info;
-              },
-            },
-{
-              id: 'get-plugin-version',
-              label: 'Get Plugin Version',
-              description: 'Gets the native plugin version.',
-              inputs: [],
-              run: async (values) => {
-                const result = await plugin.getPluginVersion();
-return result;
-              },
-            },
-{
-              id: 'send-message',
-              label: 'Send Message',
-              description: 'Sends an interactive message to the watch. Watch must be reachable.',
-              inputs: [{ name: 'action', label: 'Action', type: 'text', value: 'hello' }, { name: 'value', label: 'Value', type: 'text', value: 'world' }],
-              run: async (values) => {
-                const result = await plugin.sendMessage({
-  data: { action: values.action, value: values.value }
-});
-return result || 'Message sent';
-              },
-            },
-{
-              id: 'update-context',
-              label: 'Update Application Context',
-              description: 'Updates the shared application context. Only the latest context is kept.',
-              inputs: [{ name: 'key', label: 'Key', type: 'text', value: 'status' }, { name: 'value', label: 'Value', type: 'text', value: 'active' }],
-              run: async (values) => {
-                const context = {};
-                context[values.key] = values.value;
-                const result = await plugin.updateApplicationContext({ context });
-return result || 'Context updated';
-              },
-            },
-{
-              id: 'transfer-user-info',
-              label: 'Transfer User Info',
-              description: 'Queues user info for delivery to the watch, even when not reachable.',
-              inputs: [{ name: 'key', label: 'Key', type: 'text', value: 'data' }, { name: 'value', label: 'Value', type: 'text', value: 'important' }],
-              run: async (values) => {
-                const userInfo = {};
-                userInfo[values.key] = values.value;
-                const result = await plugin.transferUserInfo({ userInfo });
-return result || 'User info queued';
-              },
-            },
-{
-  id: 'setup-listeners',
-  label: 'Setup Event Listeners',
-  description: 'Sets up listeners for all watch events and auto-replies to watch messages.',
-  inputs: [],
-  run: async (values) => {
-    await plugin.addListener('messageReceived', (event) => {
-      console.log('messageReceived:', event);
-      state.lastMessage = event;
-      updateEventLog('Message received', event.message);
-    });
-    await plugin.addListener('messageReceivedWithReply', async (event) => {
-      console.log('messageReceivedWithReply:', event);
-      state.lastMessageWithReply = event;
-      updateEventLog('Message with reply', event.message);
-
-      // Auto-reply based on action
-      const action = event.message?.action;
-      let replyData = { received: true, timestamp: Date.now() };
-
-      if (action === 'ping') {
-        replyData = { pong: true, timestamp: Date.now() };
-      } else if (action === 'requestData') {
-        replyData = {
-          status: 'ok',
-          data: { counter: event.message?.counter || 0, processed: true },
-          timestamp: Date.now()
-        };
-      }
-
-      await plugin.replyToMessage({
-        callbackId: event.callbackId,
-        data: replyData
+  {
+    id: 'get-info',
+    label: 'Get Watch Info',
+    description: 'Calls getInfo() to discover watch connectivity status.',
+    inputs: [],
+    run: async (values) => {
+      const info = await plugin.getInfo();
+      return info;
+    },
+  },
+  {
+    id: 'get-plugin-version',
+    label: 'Get Plugin Version',
+    description: 'Gets the native plugin version.',
+    inputs: [],
+    run: async (values) => {
+      const result = await plugin.getPluginVersion();
+      return result;
+    },
+  },
+  {
+    id: 'send-message',
+    label: 'Send Message',
+    description: 'Sends an interactive message to the watch. Watch must be reachable.',
+    inputs: [
+      { name: 'action', label: 'Action', type: 'text', value: 'hello' },
+      { name: 'value', label: 'Value', type: 'text', value: 'world' },
+    ],
+    run: async (values) => {
+      const result = await plugin.sendMessage({
+        data: { action: values.action, value: values.value },
       });
-      console.log('Replied to watch:', replyData);
-    });
-    await plugin.addListener('applicationContextReceived', (event) => {
-      console.log('applicationContextReceived:', event);
-      state.lastContext = event;
-      updateEventLog('Context received', event.context);
-    });
-    await plugin.addListener('userInfoReceived', (event) => {
-      console.log('userInfoReceived:', event);
-      state.lastUserInfo = event;
-      updateEventLog('User info received', event.userInfo);
-    });
-    await plugin.addListener('reachabilityChanged', (event) => {
-      console.log('reachabilityChanged:', event);
-      state.isReachable = event.isReachable;
-      updateEventLog('Reachability', { isReachable: event.isReachable });
-    });
-    await plugin.addListener('activationStateChanged', (event) => {
-      console.log('activationStateChanged:', event);
-      state.activationState = event.state;
-      updateEventLog('Activation state', { state: event.state });
-    });
-    return 'All listeners setup with auto-reply. Watch for events in the log below.';
+      return result || 'Message sent';
+    },
   },
-},
-{
-  id: 'remove-listeners',
-  label: 'Remove All Listeners',
-  description: 'Removes all event listeners.',
-  inputs: [],
-  run: async (values) => {
-    await plugin.removeAllListeners();
-    return 'All listeners removed.';
+  {
+    id: 'update-context',
+    label: 'Update Application Context',
+    description: 'Updates the shared application context. Only the latest context is kept.',
+    inputs: [
+      { name: 'key', label: 'Key', type: 'text', value: 'status' },
+      { name: 'value', label: 'Value', type: 'text', value: 'active' },
+    ],
+    run: async (values) => {
+      const context = {};
+      context[values.key] = values.value;
+      const result = await plugin.updateApplicationContext({ context });
+      return result || 'Context updated';
+    },
   },
-}
+  {
+    id: 'transfer-user-info',
+    label: 'Transfer User Info',
+    description: 'Queues user info for delivery to the watch, even when not reachable.',
+    inputs: [
+      { name: 'key', label: 'Key', type: 'text', value: 'data' },
+      { name: 'value', label: 'Value', type: 'text', value: 'important' },
+    ],
+    run: async (values) => {
+      const userInfo = {};
+      userInfo[values.key] = values.value;
+      const result = await plugin.transferUserInfo({ userInfo });
+      return result || 'User info queued';
+    },
+  },
+  {
+    id: 'setup-listeners',
+    label: 'Setup Event Listeners',
+    description: 'Sets up listeners for all watch events and auto-replies to watch messages.',
+    inputs: [],
+    run: async (values) => {
+      await plugin.addListener('messageReceived', (event) => {
+        console.log('messageReceived:', event);
+        state.lastMessage = event;
+        updateEventLog('Message received', event.message);
+      });
+      await plugin.addListener('messageReceivedWithReply', async (event) => {
+        console.log('messageReceivedWithReply:', event);
+        state.lastMessageWithReply = event;
+        updateEventLog('Message with reply', event.message);
+
+        // Auto-reply based on action
+        const action = event.message?.action;
+        let replyData = { received: true, timestamp: Date.now() };
+
+        if (action === 'ping') {
+          replyData = { pong: true, timestamp: Date.now() };
+        } else if (action === 'requestData') {
+          replyData = {
+            status: 'ok',
+            data: { counter: event.message?.counter || 0, processed: true },
+            timestamp: Date.now(),
+          };
+        }
+
+        await plugin.replyToMessage({
+          callbackId: event.callbackId,
+          data: replyData,
+        });
+        console.log('Replied to watch:', replyData);
+      });
+      await plugin.addListener('applicationContextReceived', (event) => {
+        console.log('applicationContextReceived:', event);
+        state.lastContext = event;
+        updateEventLog('Context received', event.context);
+      });
+      await plugin.addListener('userInfoReceived', (event) => {
+        console.log('userInfoReceived:', event);
+        state.lastUserInfo = event;
+        updateEventLog('User info received', event.userInfo);
+      });
+      await plugin.addListener('reachabilityChanged', (event) => {
+        console.log('reachabilityChanged:', event);
+        state.isReachable = event.isReachable;
+        updateEventLog('Reachability', { isReachable: event.isReachable });
+      });
+      await plugin.addListener('activationStateChanged', (event) => {
+        console.log('activationStateChanged:', event);
+        state.activationState = event.state;
+        updateEventLog('Activation state', { state: event.state });
+      });
+      return 'All listeners setup with auto-reply. Watch for events in the log below.';
+    },
+  },
+  {
+    id: 'remove-listeners',
+    label: 'Remove All Listeners',
+    description: 'Removes all event listeners.',
+    inputs: [],
+    run: async (values) => {
+      await plugin.removeAllListeners();
+      return 'All listeners removed.';
+    },
+  },
 ];
 
 const actionSelect = document.getElementById('action-select');
