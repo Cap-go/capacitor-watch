@@ -20,7 +20,9 @@ cd "$repo_root"
 bun run build
 
 rm -rf "$pack_dir" "$test_app"
+rm -rf "$tmp_root/watch-sdk"
 mkdir -p "$pack_dir" "$test_app"
+cp -R watch-sdk "$tmp_root/watch-sdk"
 bun pm pack --destination "$pack_dir" --quiet
 
 shopt -s nullglob
