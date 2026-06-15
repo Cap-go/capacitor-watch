@@ -18,7 +18,8 @@
     "@capacitor/core": "^8.0.0",
     "@capacitor/ios": "^8.0.0",
     "@capgo/capacitor-watch": "file:..",
-    "@capgo/capacitor-updater": "^8.45.11"
+    "@capgo/capacitor-updater": "^8.45.11",
+    "@capacitor/splash-screen": "^8.0.0"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
