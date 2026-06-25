@@ -1,13 +1,11 @@
 package app.capgo.capacitor.watch;
 
 import android.util.Log;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-
 import com.google.android.gms.tasks.Tasks;
 import com.google.android.gms.wearable.DataClient;
 import com.google.android.gms.wearable.DataEvent;
@@ -20,10 +18,6 @@ import com.google.android.gms.wearable.MessageEvent;
 import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Wear OS communication plugin for Capacitor.
@@ -162,23 +158,21 @@ public class CapgoWatchPlugin extends Plugin {
         }
 
         final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
-        executor.execute(
-            () -> {
-                try {
-                    final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
-                    if (nodes.isEmpty()) {
-                        call.reject("No connected Wear OS devices found");
-                        return;
-                    }
-                    for (final Node node : nodes) {
-                        Tasks.await(messageClient.sendMessage(node.getId(), PATH_MESSAGE, payload));
-                    }
-                    call.resolve();
-                } catch (ExecutionException | InterruptedException e) {
-                    call.reject("Failed to send message: " + e.getMessage(), e);
+        executor.execute(() -> {
+            try {
+                final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
+                if (nodes.isEmpty()) {
+                    call.reject("No connected Wear OS devices found");
+                    return;
                 }
+                for (final Node node : nodes) {
+                    Tasks.await(messageClient.sendMessage(node.getId(), PATH_MESSAGE, payload));
+                }
+                call.resolve();
+            } catch (ExecutionException | InterruptedException e) {
+                call.reject("Failed to send message: " + e.getMessage(), e);
             }
-        );
+        });
     }
 
     @PluginMethod
@@ -189,19 +183,17 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        executor.execute(
-            () -> {
-                try {
-                    final PutDataMapRequest request = PutDataMapRequest.create(PATH_CONTEXT);
-                    request.getDataMap().putString("payload", context.toString());
-                    request.setUrgent();
-                    Tasks.await(dataClient.putDataItem(request.asPutDataRequest()));
-                    call.resolve();
-                } catch (ExecutionException | InterruptedException e) {
-                    call.reject("Failed to update application context: " + e.getMessage(), e);
-                }
+        executor.execute(() -> {
+            try {
+                final PutDataMapRequest request = PutDataMapRequest.create(PATH_CONTEXT);
+                request.getDataMap().putString("payload", context.toString());
+                request.setUrgent();
+                Tasks.await(dataClient.putDataItem(request.asPutDataRequest()));
+                call.resolve();
+            } catch (ExecutionException | InterruptedException e) {
+                call.reject("Failed to update application context: " + e.getMessage(), e);
             }
-        );
+        });
     }
 
     @PluginMethod
@@ -213,19 +205,17 @@ public class CapgoWatchPlugin extends Plugin {
         }
 
         final String path = PATH_USER_INFO + UUID.randomUUID();
-        executor.execute(
-            () -> {
-                try {
-                    final PutDataMapRequest request = PutDataMapRequest.create(path);
-                    request.getDataMap().putString("payload", userInfo.toString());
-                    request.setUrgent();
-                    Tasks.await(dataClient.putDataItem(request.asPutDataRequest()));
-                    call.resolve();
-                } catch (ExecutionException | InterruptedException e) {
-                    call.reject("Failed to transfer user info: " + e.getMessage(), e);
-                }
+        executor.execute(() -> {
+            try {
+                final PutDataMapRequest request = PutDataMapRequest.create(path);
+                request.getDataMap().putString("payload", userInfo.toString());
+                request.setUrgent();
+                Tasks.await(dataClient.putDataItem(request.asPutDataRequest()));
+                call.resolve();
+            } catch (ExecutionException | InterruptedException e) {
+                call.reject("Failed to transfer user info: " + e.getMessage(), e);
             }
-        );
+        });
     }
 
     @PluginMethod
@@ -250,44 +240,40 @@ public class CapgoWatchPlugin extends Plugin {
 
         final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
         final String replyPath = PATH_REPLY + callbackId;
-        executor.execute(
-            () -> {
-                try {
-                    Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
-                    call.resolve();
-                } catch (ExecutionException | InterruptedException e) {
-                    call.reject("Failed to send reply: " + e.getMessage(), e);
-                }
+        executor.execute(() -> {
+            try {
+                Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
+                call.resolve();
+            } catch (ExecutionException | InterruptedException e) {
+                call.reject("Failed to send reply: " + e.getMessage(), e);
             }
-        );
+        });
     }
 
     @PluginMethod
     public void getInfo(final PluginCall call) {
-        executor.execute(
-            () -> {
-                try {
-                    final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
-                    final boolean isReachable = !nodes.isEmpty();
-                    final JSObject ret = new JSObject();
-                    ret.put("isSupported", true);
-                    ret.put("isPaired", isReachable);
-                    ret.put("isWatchAppInstalled", isReachable);
-                    ret.put("isReachable", isReachable);
-                    ret.put("activationState", isReachable ? 2 : 0);
-                    call.resolve(ret);
-                } catch (ExecutionException | InterruptedException e) {
-                    // Wear OS API unavailable (e.g. Google Play Services missing)
-                    final JSObject ret = new JSObject();
-                    ret.put("isSupported", false);
-                    ret.put("isPaired", false);
-                    ret.put("isWatchAppInstalled", false);
-                    ret.put("isReachable", false);
-                    ret.put("activationState", 0);
-                    call.resolve(ret);
-                }
+        executor.execute(() -> {
+            try {
+                final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
+                final boolean isReachable = !nodes.isEmpty();
+                final JSObject ret = new JSObject();
+                ret.put("isSupported", true);
+                ret.put("isPaired", isReachable);
+                ret.put("isWatchAppInstalled", isReachable);
+                ret.put("isReachable", isReachable);
+                ret.put("activationState", isReachable ? 2 : 0);
+                call.resolve(ret);
+            } catch (ExecutionException | InterruptedException e) {
+                // Wear OS API unavailable (e.g. Google Play Services missing)
+                final JSObject ret = new JSObject();
+                ret.put("isSupported", false);
+                ret.put("isPaired", false);
+                ret.put("isWatchAppInstalled", false);
+                ret.put("isReachable", false);
+                ret.put("activationState", 0);
+                call.resolve(ret);
             }
-        );
+        });
     }
 
     @PluginMethod
