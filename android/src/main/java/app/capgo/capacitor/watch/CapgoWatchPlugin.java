@@ -1,5 +1,6 @@
 package app.capgo.capacitor.watch;
 
+import android.net.Uri;
 import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -7,6 +8,8 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.google.android.gms.tasks.Tasks;
+import com.google.android.gms.wearable.CapabilityClient;
+import com.google.android.gms.wearable.CapabilityInfo;
 import com.google.android.gms.wearable.DataClient;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
@@ -19,6 +22,7 @@ import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -49,6 +53,9 @@ public class CapgoWatchPlugin extends Plugin {
     private static final String TAG = "CapgoWatchPlugin";
     private static final String PLUGIN_VERSION = "8.0.25";
 
+    /** Capability advertised by the companion Wear OS app. */
+    static final String WATCH_APP_CAPABILITY = "capgo_watch";
+
     /** Path for regular messages sent/received via MessageClient. */
     static final String PATH_MESSAGE = "/capgo/message";
     /** Path prefix for messages that require a reply. */
@@ -60,8 +67,11 @@ public class CapgoWatchPlugin extends Plugin {
     /** DataItem path prefix for user info transfers. */
     static final String PATH_USER_INFO = "/capgo/userinfo/";
 
-    /** Maps callbackId to sourceNodeId for pending reply messages. */
-    private final Map<String, String> pendingReplies = new ConcurrentHashMap<>();
+    /** Pending reply callbacks expire after 5 minutes. */
+    private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
+
+    /** Maps callbackId to pending reply metadata. */
+    private final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
 
     /** Shared thread pool for all background Wear OS operations. */
     private final ExecutorService executor = Executors.newCachedThreadPool();
@@ -72,12 +82,23 @@ public class CapgoWatchPlugin extends Plugin {
     private final MessageClient.OnMessageReceivedListener messageListener = this::handleMessageReceived;
     private final DataClient.OnDataChangedListener dataListener = this::handleDataChanged;
 
+    private static final class PendingReply {
+
+        final String nodeId;
+        final long createdAt;
+
+        PendingReply(final String nodeId, final long createdAt) {
+            this.nodeId = nodeId;
+            this.createdAt = createdAt;
+        }
+    }
+
     @Override
     public void load() {
         messageClient = Wearable.getMessageClient(getContext());
         dataClient = Wearable.getDataClient(getContext());
-        messageClient.addListener(messageListener);
-        dataClient.addListener(dataListener);
+        messageClient.addListener(messageListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register message listener", e));
+        dataClient.addListener(dataListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register data listener", e));
     }
 
     @Override
@@ -91,10 +112,27 @@ public class CapgoWatchPlugin extends Plugin {
         executor.shutdown();
     }
 
+    private void expirePendingReplies() {
+        final long now = System.currentTimeMillis();
+        final Iterator<Map.Entry<String, PendingReply>> iterator = pendingReplies.entrySet().iterator();
+        while (iterator.hasNext()) {
+            final Map.Entry<String, PendingReply> entry = iterator.next();
+            if (now - entry.getValue().createdAt > PENDING_REPLY_TTL_MS) {
+                iterator.remove();
+            }
+        }
+    }
+
     // ── Incoming message / data handlers ─────────────────────────────────────
 
     private void handleMessageReceived(MessageEvent event) {
         final String path = event.getPath();
+        if (!PATH_MESSAGE.equals(path) && !PATH_MESSAGE_WITH_REPLY.equals(path)) {
+            return;
+        }
+
+        expirePendingReplies();
+
         final String nodeId = event.getSourceNodeId();
         final String payload = new String(event.getData(), StandardCharsets.UTF_8);
 
@@ -102,9 +140,9 @@ public class CapgoWatchPlugin extends Plugin {
             final JSONObject json = new JSONObject(payload);
             final JSObject messageData = new JSObject(json.toString());
 
-            if (path != null && path.startsWith(PATH_MESSAGE_WITH_REPLY)) {
+            if (PATH_MESSAGE_WITH_REPLY.equals(path)) {
                 final String callbackId = UUID.randomUUID().toString();
-                pendingReplies.put(callbackId, nodeId);
+                pendingReplies.put(callbackId, new PendingReply(nodeId, System.currentTimeMillis()));
 
                 final JSObject evt = new JSObject();
                 evt.put("message", messageData);
@@ -122,29 +160,49 @@ public class CapgoWatchPlugin extends Plugin {
 
     private void handleDataChanged(DataEventBuffer dataEvents) {
         for (DataEvent event : dataEvents) {
-            if (event.getType() == DataEvent.TYPE_CHANGED) {
-                final DataItem item = event.getDataItem();
-                final String path = item.getUri().getPath();
-                try {
-                    final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                    final String payload = dataMap.getString("payload", "{}");
-                    final JSONObject json = new JSONObject(payload);
-                    final JSObject data = new JSObject(json.toString());
+            if (event.getType() != DataEvent.TYPE_CHANGED) {
+                continue;
+            }
 
-                    if (path != null && path.startsWith(PATH_CONTEXT)) {
-                        final JSObject evt = new JSObject();
-                        evt.put("context", data);
-                        notifyListeners("applicationContextReceived", evt);
-                    } else if (path != null && path.startsWith(PATH_USER_INFO)) {
-                        final JSObject evt = new JSObject();
-                        evt.put("userInfo", data);
-                        notifyListeners("userInfoReceived", evt);
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error processing data change", e);
+            final DataItem item = event.getDataItem();
+            final String path = item.getUri().getPath();
+            if (path == null) {
+                continue;
+            }
+
+            final boolean isContext = PATH_CONTEXT.equals(path);
+            final boolean isUserInfo = path.startsWith(PATH_USER_INFO);
+            if (!isContext && !isUserInfo) {
+                continue;
+            }
+
+            try {
+                final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                final String payload = dataMap.getString("payload", "{}");
+                final JSONObject json = new JSONObject(payload);
+                final JSObject data = new JSObject(json.toString());
+
+                if (isContext) {
+                    final JSObject evt = new JSObject();
+                    evt.put("context", data);
+                    notifyListeners("applicationContextReceived", evt);
+                } else {
+                    final JSObject evt = new JSObject();
+                    evt.put("userInfo", data);
+                    notifyListeners("userInfoReceived", evt);
+                    deleteDataItem(item.getUri());
                 }
+            } catch (Exception e) {
+                Log.e(TAG, "Error processing data change", e);
             }
         }
+    }
+
+    private void deleteDataItem(final Uri uri) {
+        if (dataClient == null) {
+            return;
+        }
+        dataClient.deleteDataItems(uri).addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e));
     }
 
     // ── Plugin methods ────────────────────────────────────────────────────────
@@ -232,17 +290,26 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        final String nodeId = pendingReplies.remove(callbackId);
-        if (nodeId == null) {
+        expirePendingReplies();
+
+        final PendingReply pendingReply = pendingReplies.get(callbackId);
+        if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;
         }
+        if (System.currentTimeMillis() - pendingReply.createdAt > PENDING_REPLY_TTL_MS) {
+            pendingReplies.remove(callbackId);
+            call.reject("Pending reply expired for callbackId: " + callbackId);
+            return;
+        }
 
+        final String nodeId = pendingReply.nodeId;
         final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
         final String replyPath = PATH_REPLY + callbackId;
         executor.execute(() -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
+                pendingReplies.remove(callbackId);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 call.reject("Failed to send reply: " + e.getMessage(), e);
@@ -256,10 +323,15 @@ public class CapgoWatchPlugin extends Plugin {
             try {
                 final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
+                final CapabilityClient capabilityClient = Wearable.getCapabilityClient(getContext());
+                final CapabilityInfo capabilityInfo = Tasks.await(
+                    capabilityClient.getCapability(WATCH_APP_CAPABILITY, CapabilityClient.FILTER_ALL)
+                );
+                final boolean isWatchAppInstalled = !capabilityInfo.getNodes().isEmpty();
                 final JSObject ret = new JSObject();
                 ret.put("isSupported", true);
                 ret.put("isPaired", isReachable);
-                ret.put("isWatchAppInstalled", isReachable);
+                ret.put("isWatchAppInstalled", isWatchAppInstalled);
                 ret.put("isReachable", isReachable);
                 ret.put("activationState", isReachable ? 2 : 0);
                 call.resolve(ret);
