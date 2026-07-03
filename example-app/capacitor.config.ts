@@ -4,7 +4,7 @@ import pkg from './package.json';
 
 const config: CapacitorConfig = {
   appId: 'app.capgo.watch',
-  appName: 'Watch Example',
+  appName: '@capgo/capacitor-watch',
   webDir: 'dist',
   plugins: {
     SplashScreen: {
