@@ -6,7 +6,7 @@ import WatchConnectivity
 /// here: https://capacitorjs.com/docs/plugins/ios
 @objc(CapgoWatchPlugin)
 public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
-    private let pluginVersion: String = "8.1.1"
+    private let pluginVersion: String = "8.1.2"
     public let identifier = "CapgoWatchPlugin"
     public let jsName = "CapgoWatch"
     public let pluginMethods: [CAPPluginMethod] = [
