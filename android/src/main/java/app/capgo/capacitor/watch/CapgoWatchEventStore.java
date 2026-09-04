@@ -57,32 +57,46 @@ public class CapgoWatchEventStore {
 
     public List<StoredEvent> drainAll() {
         synchronized (STORE_LOCK) {
-            final JSONArray events = readEventsArray();
-            final List<StoredEvent> drained = new ArrayList<>();
-            final JSONArray retained = new JSONArray();
+            return drainMatchingEvents(null);
+        }
+    }
 
-            for (int i = 0; i < events.length(); i++) {
+    public List<StoredEvent> drainEventsFor(final String eventName) {
+        synchronized (STORE_LOCK) {
+            return drainMatchingEvents(eventName);
+        }
+    }
+
+    private List<StoredEvent> drainMatchingEvents(final String eventNameFilter) {
+        final JSONArray events = readEventsArray();
+        final List<StoredEvent> drained = new ArrayList<>();
+        final JSONArray retained = new JSONArray();
+
+        for (int i = 0; i < events.length(); i++) {
+            try {
+                final JSONObject entry = events.getJSONObject(i);
+                final String eventName = entry.getString("eventName");
+                if (eventNameFilter != null && !eventNameFilter.equals(eventName)) {
+                    retained.put(entry);
+                    continue;
+                }
+                final JSONObject payloadJson = entry.getJSONObject("payload");
+                final String replyNodeId = entry.optString("replyNodeId", null);
+                drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId));
+            } catch (JSONException e) {
+                Log.w(TAG, "Retaining unreadable stored event at index " + i, e);
                 try {
-                    final JSONObject entry = events.getJSONObject(i);
-                    final String eventName = entry.getString("eventName");
-                    final JSONObject payloadJson = entry.getJSONObject("payload");
-                    final String replyNodeId = entry.optString("replyNodeId", null);
-                    drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId));
-                } catch (JSONException e) {
-                    Log.w(TAG, "Retaining unreadable stored event at index " + i, e);
-                    try {
-                        retained.put(events.get(i));
-                    } catch (JSONException retainError) {
-                        Log.w(TAG, "Dropping completely unreadable stored event at index " + i, retainError);
-                    }
+                    retained.put(events.get(i));
+                } catch (JSONException retainError) {
+                    Log.w(TAG, "Dropping completely unreadable stored event at index " + i, retainError);
                 }
             }
-
-            if (!preferences.edit().putString(KEY_EVENTS, retained.toString()).commit()) {
-                Log.w(TAG, "Failed to commit drained event store");
-            }
-            return drained;
         }
+
+        if (!preferences.edit().putString(KEY_EVENTS, retained.toString()).commit()) {
+            Log.w(TAG, "Failed to commit drained event store");
+        }
+        return drained;
     }
 
     public void savePendingReply(final String callbackId, final String nodeId) {

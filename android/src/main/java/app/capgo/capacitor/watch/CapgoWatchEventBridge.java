@@ -21,8 +21,11 @@ public final class CapgoWatchEventBridge {
         pluginRef = new WeakReference<>(plugin);
     }
 
-    public static void unregisterPlugin() {
-        pluginRef = new WeakReference<>(null);
+    public static void unregisterPlugin(final CapgoWatchPlugin plugin) {
+        final CapgoWatchPlugin current = pluginRef.get();
+        if (current == null || current == plugin) {
+            pluginRef = new WeakReference<>(null);
+        }
     }
 
     public static void dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
@@ -36,14 +39,14 @@ public final class CapgoWatchEventBridge {
         final String replyNodeId
     ) {
         final CapgoWatchPlugin plugin = pluginRef.get();
-        final boolean shouldPersist = plugin == null || !plugin.hasWatchListeners(eventName);
 
-        if (shouldPersist && eventStore != null) {
-            eventStore.append(eventName, payload, replyNodeId);
+        if (plugin != null && plugin.hasWatchListeners(eventName)) {
+            plugin.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
+            return;
         }
 
-        if (plugin != null) {
-            plugin.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
+        if (eventStore != null) {
+            eventStore.append(eventName, payload, replyNodeId);
         }
     }
 

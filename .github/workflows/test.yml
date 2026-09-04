@@ -81,9 +81,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check out
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Run iOS unit tests
-        run: xcodebuild test -scheme CapgoCapacitorWatch -destination 'platform=iOS Simulator,name=iPhone 16' -quiet
+        shell: bash
+        run: |
+          set -euo pipefail
+          DESTINATION="$(bash ./.github/scripts/select-ios-simulator-destination.sh)"
+          echo "Using simulator destination: ${DESTINATION}"
+          xcodebuild test -scheme CapgoCapacitorWatch -destination "${DESTINATION}" -quiet
   web:
     runs-on: ubuntu-latest
     # Keep this job capped at 10 minutes; never raise it unless explicitly asked.

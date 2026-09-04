@@ -55,17 +55,22 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         final String payload = new String(event.getData(), StandardCharsets.UTF_8);
         try {
             final JSONObject json = new JSONObject(payload);
-            final String callbackId = CapgoWatchMessagePayload.extractCallbackId(json, isReplyPath);
-            final JSObject messageData = CapgoWatchMessagePayload.toMessageData(json, isReplyPath);
 
             if (isReplyPath) {
-                CapgoWatchPlugin.registerPendingReply(callbackId, event.getSourceNodeId());
+                if (!CapgoWatchMessagePayload.isReplyEnvelope(json)) {
+                    Log.w(TAG, "Skipping non-envelope reply-path message");
+                    return;
+                }
+
+                final CapgoWatchMessagePayload.ReplyEnvelope envelope = CapgoWatchMessagePayload.parseReplyEnvelope(json);
+                CapgoWatchPlugin.registerPendingReply(envelope.callbackId, event.getSourceNodeId());
 
                 final JSObject evt = new JSObject();
-                evt.put("message", messageData);
-                evt.put("callbackId", callbackId);
+                evt.put("message", envelope.messageData);
+                evt.put("callbackId", envelope.callbackId);
                 CapgoWatchEventBridge.dispatch("messageReceivedWithReply", evt, true, event.getSourceNodeId());
             } else {
+                final JSObject messageData = CapgoWatchMessagePayload.toMessageData(json);
                 final JSObject evt = new JSObject();
                 evt.put("message", messageData);
                 CapgoWatchEventBridge.dispatch("messageReceived", evt, true);

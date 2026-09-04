@@ -2,10 +2,8 @@ package app.capgo.capacitor.watch;
 
 import android.util.Log;
 import com.getcapacitor.PluginCall;
-import com.google.android.gms.tasks.Tasks;
 import com.google.android.gms.wearable.MessageClient;
 import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -47,6 +45,12 @@ final class CapgoWatchPendingReplyManager {
         }
         incomingExpiryTasks.clear();
         outgoingExpiryTasks.clear();
+
+        for (final OutgoingPendingReply pending : outgoing.values()) {
+            pending.call.reject("Watch plugin destroyed");
+        }
+        outgoing.clear();
+        incoming.clear();
         scheduler.shutdownNow();
     }
 
