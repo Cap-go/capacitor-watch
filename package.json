@@ -14,7 +14,8 @@
     "ios/Tests",
     "Package.swift",
     "CapgoCapacitorWatch.podspec",
-    "watch-sdk"
+    "watch-sdk",
+    "watch-sdk/wearos"
   ],
   "author": "Martin Donadieu <martin@capgo.app>",
   "license": "MPL-2.0",
@@ -47,6 +48,7 @@
     "swiftlint": "node-swiftlint",
     "docgen": "docgen --api CapgoWatchPlugin --output-readme README.md --output-json dist/docs.json",
     "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs",
+    "test": "tsc && node --test dist/esm/defaults.test.js",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
     "prepublishOnly": "bun run build",

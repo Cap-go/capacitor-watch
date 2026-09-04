@@ -15,6 +15,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "transferUserInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "replyToMessage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getReceivedState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getPluginVersion", returnType: CAPPluginReturnPromise)
     ]
 
@@ -55,7 +56,22 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let message = convertToWatchMessage(data)
+        let expectsReply = call.getBool("expectsReply") ?? false
+        let message = CapgoWatchMessageConverter.convertToWatchMessage(data)
+
+        if expectsReply {
+            WCSession.default.sendMessage(message, replyHandler: { reply in
+                let convertedReply = CapgoWatchMessageConverter.convertFromWatchMessage(reply)
+                if convertedReply.isEmpty {
+                    call.resolve(["reply": NSNull()])
+                } else {
+                    call.resolve(["reply": convertedReply])
+                }
+            }, errorHandler: { error in
+                call.reject("Failed to send message: \(error.localizedDescription)")
+            })
+            return
+        }
 
         WCSession.default.sendMessage(message, replyHandler: nil) { error in
             call.reject("Failed to send message: \(error.localizedDescription)")
@@ -80,7 +96,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchContext = convertToWatchMessage(context)
+        let watchContext = CapgoWatchMessageConverter.convertToWatchMessage(context)
 
         do {
             try WCSession.default.updateApplicationContext(watchContext)
@@ -106,7 +122,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchUserInfo = convertToWatchMessage(userInfo)
+        let watchUserInfo = CapgoWatchMessageConverter.convertToWatchMessage(userInfo)
         WCSession.default.transferUserInfo(watchUserInfo)
         call.resolve()
     }
@@ -131,7 +147,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let replyData = convertToWatchMessage(data)
+        let replyData = CapgoWatchMessageConverter.convertToWatchMessage(data)
         handler(replyData)
         call.resolve()
     }
@@ -160,6 +176,21 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         ])
     }
 
+    @objc func getReceivedState(_ call: CAPPluginCall) {
+        guard WCSession.isSupported() else {
+            call.resolve(["context": NSNull()])
+            return
+        }
+
+        let context = WCSession.default.receivedApplicationContext
+        if context.isEmpty {
+            call.resolve(["context": NSNull()])
+            return
+        }
+
+        call.resolve(["context": CapgoWatchMessageConverter.convertFromWatchMessage(context)])
+    }
+
     @objc func getPluginVersion(_ call: CAPPluginCall) {
         call.resolve(["version": pluginVersion])
     }
@@ -172,24 +203,8 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         replyLock.unlock()
     }
 
-    // MARK: - Helper methods
-
-    private func convertToWatchMessage(_ jsObject: JSObject) -> [String: Any] {
-        var result: [String: Any] = [:]
-        for (key, value) in jsObject {
-            result[key] = convertJSValue(value)
-        }
-        return result
-    }
-
-    private func convertJSValue(_ value: Any) -> Any {
-        if let dict = value as? JSObject {
-            return convertToWatchMessage(dict)
-        } else if let array = value as? JSArray {
-            return array.map { convertJSValue($0) }
-        } else {
-            return value
-        }
+    func notifyWatchEvent(_ eventName: String, data: [String: Any]) {
+        notifyListeners(eventName, data: data, retainUntilConsumed: true)
     }
 }
 
@@ -216,7 +231,7 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
         CAPLog.print("[CapgoWatch] Activation completed with state: \(activationState.rawValue)")
         plugin?.notifyListeners("activationStateChanged", data: [
             "state": activationState.rawValue
-        ])
+        ], retainUntilConsumed: true)
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {
@@ -225,23 +240,20 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
 
     func sessionDidDeactivate(_ session: WCSession) {
         CAPLog.print("[CapgoWatch] Session deactivated")
-        // Reactivate for multi-watch support
         WCSession.default.activate()
     }
 
     func sessionReachabilityDidChange(_ session: WCSession) {
         CAPLog.print("[CapgoWatch] Reachability changed: \(session.isReachable)")
-        plugin?.notifyListeners("reachabilityChanged", data: [
+        plugin?.notifyWatchEvent("reachabilityChanged", data: [
             "isReachable": session.isReachable
         ])
     }
 
-    // MARK: - Message receiving
-
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         CAPLog.print("[CapgoWatch] Received message: \(message)")
-        plugin?.notifyListeners("messageReceived", data: [
-            "message": message
+        plugin?.notifyWatchEvent("messageReceived", data: [
+            "message": CapgoWatchMessageConverter.convertFromWatchMessage(message)
         ])
     }
 
@@ -254,27 +266,61 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
         let callbackId = UUID().uuidString
 
         plugin?.storePendingReply(callbackId: callbackId, handler: replyHandler)
-        plugin?.notifyListeners("messageReceivedWithReply", data: [
-            "message": message,
+        plugin?.notifyWatchEvent("messageReceivedWithReply", data: [
+            "message": CapgoWatchMessageConverter.convertFromWatchMessage(message),
             "callbackId": callbackId
         ])
     }
 
-    // MARK: - Application context
-
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         CAPLog.print("[CapgoWatch] Received application context: \(applicationContext)")
-        plugin?.notifyListeners("applicationContextReceived", data: [
-            "context": applicationContext
+        plugin?.notifyWatchEvent("applicationContextReceived", data: [
+            "context": CapgoWatchMessageConverter.convertFromWatchMessage(applicationContext)
         ])
     }
 
-    // MARK: - User info
-
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         CAPLog.print("[CapgoWatch] Received user info: \(userInfo)")
-        plugin?.notifyListeners("userInfoReceived", data: [
-            "userInfo": userInfo
+        plugin?.notifyWatchEvent("userInfoReceived", data: [
+            "userInfo": CapgoWatchMessageConverter.convertFromWatchMessage(userInfo)
         ])
+    }
+}
+
+enum CapgoWatchMessageConverter {
+    static func convertToWatchMessage(_ jsObject: JSObject) -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in jsObject {
+            result[key] = convertJSValue(value)
+        }
+        return result
+    }
+
+    static func convertFromWatchMessage(_ message: [String: Any]) -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in message {
+            result[key] = convertWatchValue(value)
+        }
+        return result
+    }
+
+    private static func convertJSValue(_ value: Any) -> Any {
+        if let dict = value as? JSObject {
+            return convertToWatchMessage(dict)
+        } else if let array = value as? JSArray {
+            return array.map { convertJSValue($0) }
+        } else {
+            return value
+        }
+    }
+
+    private static func convertWatchValue(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            return convertFromWatchMessage(dict)
+        } else if let array = value as? [Any] {
+            return array.map { convertWatchValue($0) }
+        } else {
+            return value
+        }
     }
 }
