@@ -1,6 +1,5 @@
 package app.capgo.capacitor.watch;
 
-import android.net.Uri;
 import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -39,10 +38,11 @@ public class CapgoWatchPlugin extends Plugin {
     private static final String PLUGIN_VERSION = "8.1.3";
     private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
 
-    private static volatile CapgoWatchPendingReplyManager pendingReplyManager;
+    private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
+    private CapgoWatchPendingReplyManager pendingReplyManager;
     private MessageClient messageClient;
     private DataClient dataClient;
     private NodeClient nodeClient;
@@ -68,6 +68,7 @@ public class CapgoWatchPlugin extends Plugin {
 
         pendingReplyManager = new CapgoWatchPendingReplyManager(PENDING_REPLY_TTL_MS);
         pendingReplyManager.initialize(messageClient, eventStore);
+        activePendingReplyManager = pendingReplyManager;
 
         capabilityClient
             .addListener(capabilityChangedListener, watchCapability)
@@ -79,14 +80,27 @@ public class CapgoWatchPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
-        CapgoWatchEventBridge.unregisterPlugin();
+        CapgoWatchEventBridge.unregisterPlugin(this);
         if (capabilityClient != null) {
             capabilityClient.removeListener(capabilityChangedListener, watchCapability);
         }
         if (pendingReplyManager != null) {
             pendingReplyManager.shutdown();
+            if (activePendingReplyManager == pendingReplyManager) {
+                activePendingReplyManager = null;
+            }
+            pendingReplyManager = null;
         }
         executor.shutdown();
+    }
+
+    @Override
+    public void addListener(final PluginCall call) {
+        super.addListener(call);
+        final String eventName = call.getString("eventName");
+        if (eventName != null) {
+            replayStoredEventsFor(eventName);
+        }
     }
 
     boolean hasWatchListeners(final String eventName) {
@@ -98,18 +112,20 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     static void registerPendingReply(final String callbackId, final String nodeId) {
-        if (pendingReplyManager != null) {
-            pendingReplyManager.registerIncoming(callbackId, nodeId);
+        final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
+        if (manager != null) {
+            manager.registerIncoming(callbackId, nodeId);
         }
     }
 
     static void handleIncomingReply(final String path, final byte[] data) {
-        if (pendingReplyManager == null || !path.startsWith(CapgoWatchConstants.PATH_REPLY)) {
+        final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
+        if (manager == null || !path.startsWith(CapgoWatchConstants.PATH_REPLY)) {
             return;
         }
 
         final String callbackId = path.substring(CapgoWatchConstants.PATH_REPLY.length());
-        final CapgoWatchPendingReplyManager.OutgoingPendingReply pending = pendingReplyManager.removeOutgoing(callbackId);
+        final CapgoWatchPendingReplyManager.OutgoingPendingReply pending = manager.removeOutgoing(callbackId);
         if (pending == null) {
             return;
         }
@@ -136,11 +152,18 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     private void replayStoredEvents() {
-        for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainAll()) {
+        replayStoredEventsFor(null);
+    }
+
+    private void replayStoredEventsFor(final String eventName) {
+        final List<CapgoWatchEventStore.StoredEvent> storedEvents =
+            eventName == null ? eventStore.drainAll() : eventStore.drainEventsFor(eventName);
+
+        for (final CapgoWatchEventStore.StoredEvent storedEvent : storedEvents) {
             if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
                 final String callbackId = storedEvent.payload.getString("callbackId", null);
-                if (callbackId != null) {
-                    registerPendingReply(callbackId, storedEvent.replyNodeId);
+                if (callbackId != null && pendingReplyManager != null) {
+                    pendingReplyManager.registerIncoming(callbackId, storedEvent.replyNodeId);
                 }
             }
             dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, true);
