@@ -19,7 +19,65 @@ export interface SendMessageOptions {
    * Must be serializable (string, number, boolean, arrays, or nested objects).
    */
   data: WatchMessageData;
+  /**
+   * When true, wait for a reply from the watch and resolve with `{ reply }`.
+   * When false or omitted, send without waiting (default).
+   *
+   * @default false
+   * @since 8.2.0
+   */
+  expectsReply?: boolean;
 }
+
+/**
+ * Result returned when `sendMessage` is called with `expectsReply: true`.
+ *
+ * @since 8.2.0
+ */
+export interface SendMessageResult {
+  /**
+   * Reply payload from the watch, or null when the watch returned an empty reply.
+   */
+  reply: WatchMessageData | null;
+}
+
+/**
+ * Last persisted application context received from the watch.
+ *
+ * @since 8.2.0
+ */
+export interface ReceivedState {
+  /**
+   * The last application context received from the watch, or null if none is stored.
+   */
+  context: WatchMessageData | null;
+}
+
+/**
+ * Plugin configuration for CapgoWatch.
+ *
+ * Configure in `capacitor.config`:
+ * ```typescript
+ * plugins: {
+ *   CapgoWatch: {
+ *     capability: 'capgo_watch', // default
+ *   },
+ * },
+ * ```
+ *
+ * @since 8.2.0
+ */
+export interface CapgoWatchPluginConfig {
+  /**
+   * Wear OS capability name advertised by the companion watch app.
+   *
+   * @default 'capgo_watch'
+   */
+  capability?: string;
+}
+
+/** Default Wear OS capability when not configured. */
+export const DEFAULT_WATCH_CAPABILITY = 'capgo_watch';
 
 /**
  * Options for updating the application context.
@@ -202,9 +260,14 @@ export interface CapgoWatchPlugin {
    * await CapgoWatch.sendMessage({
    *   data: { action: 'refresh', timestamp: Date.now() }
    * });
+   *
+   * const { reply } = await CapgoWatch.sendMessage({
+   *   data: { action: 'getStatus' },
+   *   expectsReply: true,
+   * });
    * ```
    */
-  sendMessage(options: SendMessageOptions): Promise<void>;
+  sendMessage(options: SendMessageOptions): Promise<void | SendMessageResult>;
 
   /**
    * Update the application context shared with the watch.
@@ -277,6 +340,22 @@ export interface CapgoWatchPlugin {
    * ```
    */
   getInfo(): Promise<WatchInfo>;
+
+  /**
+   * Get the last persisted application context received from the watch.
+   * Useful after app restart to restore watch-synced state without waiting for a new event.
+   *
+   * @returns Promise that resolves with the last received context
+   * @since 8.2.0
+   * @example
+   * ```typescript
+   * const { context } = await CapgoWatch.getReceivedState();
+   * if (context) {
+   *   console.log('Restored watch context:', context);
+   * }
+   * ```
+   */
+  getReceivedState(): Promise<ReceivedState>;
 
   /**
    * Get the native Capacitor plugin version.
