@@ -38,4 +38,9 @@ class CapgoWatchMessageConverterTests: XCTestCase {
         XCTAssertEqual(converted["value"] as? String, "test")
         XCTAssertEqual(converted["count"] as? Int, 3)
     }
+
+    func testConvertFromWatchMessagePreservesEmptyDictionary() {
+        let converted = CapgoWatchMessageConverter.convertFromWatchMessage([:])
+        XCTAssertTrue(converted.isEmpty)
+    }
 }

@@ -8,6 +8,7 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.util.UUID
 import kotlinx.coroutines.tasks.await
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -22,7 +23,7 @@ class CapgoWatch private constructor(private val appContext: Context) {
 
     var capability: String = CapgoWatchPaths.DEFAULT_CAPABILITY
 
-    suspend fun sendMessage(data: Map<String, Any?>): Unit {
+    suspend fun sendMessage(data: Map<String, Any?>) {
         val payload = JSONObject(data).toString().toByteArray()
         val nodes = connectedPhoneNodes()
         if (nodes.isEmpty()) {
@@ -35,25 +36,30 @@ class CapgoWatch private constructor(private val appContext: Context) {
 
     suspend fun sendMessageForReply(data: Map<String, Any?>): Map<String, Any?> {
         val callbackId = UUID.randomUUID().toString()
+        CapgoWatchListenerService.registerPendingReply(callbackId)
         val envelope = JSONObject()
         envelope.put("callbackId", callbackId)
         envelope.put("data", JSONObject(data))
         val payload = envelope.toString().toByteArray()
         val nodes = connectedPhoneNodes()
         if (nodes.isEmpty()) {
+            CapgoWatchListenerService.cancelPendingReply(callbackId)
             throw IllegalStateException("No connected phone nodes found")
         }
 
-        for (node in nodes) {
-            messageClient.sendMessage(node.id, CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY, payload).await()
+        try {
+            for (node in nodes) {
+                messageClient.sendMessage(node.id, CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY, payload).await()
+            }
+            val replyBytes = CapgoWatchListenerService.awaitRegisteredReply(callbackId)
+                ?: throw IllegalStateException("Timed out waiting for phone reply")
+            if (replyBytes.isEmpty()) {
+                return emptyMap()
+            }
+            return jsonObjectToMap(JSONObject(String(replyBytes)))
+        } finally {
+            CapgoWatchListenerService.cancelPendingReply(callbackId)
         }
-
-        val replyBytes = CapgoWatchListenerService.awaitReply(callbackId)
-            ?: throw IllegalStateException("Timed out waiting for phone reply")
-        if (replyBytes.isEmpty()) {
-            return emptyMap()
-        }
-        return jsonObjectToMap(JSONObject(String(replyBytes)))
     }
 
     suspend fun updateApplicationContext(context: Map<String, Any?>) {
@@ -94,17 +100,29 @@ class CapgoWatch private constructor(private val appContext: Context) {
         return nodeClient.connectedNodes.await()
     }
 
+    private fun jsonValueToKotlin(value: Any?): Any? {
+        return when (value) {
+            is JSONObject -> jsonObjectToMap(value)
+            is JSONArray -> jsonArrayToList(value)
+            JSONObject.NULL -> null
+            else -> value
+        }
+    }
+
     private fun jsonObjectToMap(json: JSONObject): Map<String, Any?> {
         val result = mutableMapOf<String, Any?>()
         val keys = json.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            val value = json.get(key)
-            result[key] = when (value) {
-                is JSONObject -> jsonObjectToMap(value)
-                JSONObject.NULL -> null
-                else -> value
-            }
+            result[key] = jsonValueToKotlin(json.get(key))
+        }
+        return result
+    }
+
+    private fun jsonArrayToList(array: JSONArray): List<Any?> {
+        val result = mutableListOf<Any?>()
+        for (index in 0 until array.length()) {
+            result.add(jsonValueToKotlin(array.get(index)))
         }
         return result
     }

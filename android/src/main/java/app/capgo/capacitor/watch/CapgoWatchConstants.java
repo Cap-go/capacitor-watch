@@ -1,5 +1,7 @@
 package app.capgo.capacitor.watch;
 
+import android.net.Uri;
+
 /**
  * Shared constants for Capgo Watch phone and Wear OS SDK integrations.
  */
@@ -22,4 +24,8 @@ public final class CapgoWatchConstants {
     public static final String PREF_LAST_CONTEXT = "capgo_watch_last_context";
 
     private CapgoWatchConstants() {}
+
+    public static Uri contextDataItemUri() {
+        return Uri.parse("wear://*" + PATH_CONTEXT);
+    }
 }

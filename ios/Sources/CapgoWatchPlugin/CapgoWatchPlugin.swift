@@ -21,7 +21,9 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private var sessionDelegate: WatchSessionDelegate?
     private var pendingReplies: [String: ([String: Any]) -> Void] = [:]
+    private var pendingReplyTimers: [String: DispatchWorkItem] = [:]
     private let replyLock = NSLock()
+    private let pendingReplyTtlSeconds: TimeInterval = 5 * 60
 
     override public func load() {
         guard WCSession.isSupported() else {
@@ -140,6 +142,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
         replyLock.lock()
         let replyHandler = pendingReplies.removeValue(forKey: callbackId)
+        pendingReplyTimers.removeValue(forKey: callbackId)?.cancel()
         replyLock.unlock()
 
         guard let handler = replyHandler else {
@@ -183,11 +186,6 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let context = WCSession.default.receivedApplicationContext
-        if context.isEmpty {
-            call.resolve(["context": NSNull()])
-            return
-        }
-
         call.resolve(["context": CapgoWatchMessageConverter.convertFromWatchMessage(context)])
     }
 
@@ -200,7 +198,24 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
     func storePendingReply(callbackId: String, handler: @escaping ([String: Any]) -> Void) {
         replyLock.lock()
         pendingReplies[callbackId] = handler
+        pendingReplyTimers[callbackId]?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.expirePendingReply(callbackId: callbackId)
+        }
+        pendingReplyTimers[callbackId] = workItem
         replyLock.unlock()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pendingReplyTtlSeconds, execute: workItem)
+    }
+
+    func expirePendingReply(callbackId: String) {
+        replyLock.lock()
+        let replyHandler = pendingReplies.removeValue(forKey: callbackId)
+        pendingReplyTimers.removeValue(forKey: callbackId)
+        replyLock.unlock()
+
+        replyHandler?([:])
     }
 
     func notifyWatchEvent(_ eventName: String, data: [String: Any]) {

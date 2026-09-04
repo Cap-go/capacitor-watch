@@ -11,11 +11,57 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.json.JSONObject
 
 class CapgoWatchListenerService : WearableListenerService() {
 
     override fun onMessageReceived(event: MessageEvent) {
+        try {
+            handleMessage(event)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to handle message on path ${event.path}", e)
+        }
+    }
+
+    override fun onDataChanged(dataEvents: DataEventBuffer) {
+        for (event in dataEvents) {
+            if (event.type != DataEvent.TYPE_CHANGED) {
+                continue
+            }
+
+            val itemUri = event.dataItem.uri
+            val path = itemUri.path
+            if (path == null) {
+                continue
+            }
+
+            try {
+                when {
+                    path == CapgoWatchPaths.PATH_CONTEXT -> {
+                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                        val payload = dataMap.getString("payload", "{}")
+                        val context = jsonObjectToMap(JSONObject(payload))
+                        dispatch { it.onApplicationContextReceived(context) }
+                    }
+                    path.startsWith(CapgoWatchPaths.PATH_USER_INFO) -> {
+                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                        val payload = dataMap.getString("payload", "{}")
+                        val userInfo = jsonObjectToMap(JSONObject(payload))
+                        dispatch { it.onUserInfoReceived(userInfo) }
+                        Wearable.getDataClient(this).deleteDataItems(itemUri)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to handle data change on path $path", e)
+                if (path.startsWith(CapgoWatchPaths.PATH_USER_INFO)) {
+                    Wearable.getDataClient(this).deleteDataItems(itemUri)
+                }
+            }
+        }
+    }
+
+    private fun handleMessage(event: MessageEvent) {
         val path = event.path
         if (path.startsWith(CapgoWatchPaths.PATH_REPLY)) {
             val callbackId = path.removePrefix(CapgoWatchPaths.PATH_REPLY)
@@ -38,31 +84,6 @@ class CapgoWatchListenerService : WearableListenerService() {
         }
     }
 
-    override fun onDataChanged(dataEvents: DataEventBuffer) {
-        for (event in dataEvents) {
-            if (event.type != DataEvent.TYPE_CHANGED) {
-                continue
-            }
-
-            val path = event.dataItem.uri.path ?: continue
-            when {
-                path == CapgoWatchPaths.PATH_CONTEXT -> {
-                    val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                    val payload = dataMap.getString("payload", "{}")
-                    val context = jsonObjectToMap(JSONObject(payload))
-                    dispatch { it.onApplicationContextReceived(context) }
-                }
-                path.startsWith(CapgoWatchPaths.PATH_USER_INFO) -> {
-                    val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                    val payload = dataMap.getString("payload", "{}")
-                    val userInfo = jsonObjectToMap(JSONObject(payload))
-                    dispatch { it.onUserInfoReceived(userInfo) }
-                    Wearable.getDataClient(this).deleteDataItems(event.dataItem.uri)
-                }
-            }
-        }
-    }
-
     private fun parsePayload(bytes: ByteArray): Map<String, Any?> {
         if (bytes.isEmpty()) {
             return emptyMap()
@@ -70,17 +91,29 @@ class CapgoWatchListenerService : WearableListenerService() {
         return jsonObjectToMap(JSONObject(String(bytes)))
     }
 
+    private fun jsonValueToKotlin(value: Any?): Any? {
+        return when (value) {
+            is JSONObject -> jsonObjectToMap(value)
+            is JSONArray -> jsonArrayToList(value)
+            JSONObject.NULL -> null
+            else -> value
+        }
+    }
+
     private fun jsonObjectToMap(json: JSONObject): Map<String, Any?> {
         val result = mutableMapOf<String, Any?>()
         val keys = json.keys()
         while (keys.hasNext()) {
             val key = keys.next()
-            val value = json.get(key)
-            result[key] = when (value) {
-                is JSONObject -> jsonObjectToMap(value)
-                JSONObject.NULL -> null
-                else -> value
-            }
+            result[key] = jsonValueToKotlin(json.get(key))
+        }
+        return result
+    }
+
+    private fun jsonArrayToList(array: JSONArray): List<Any?> {
+        val result = mutableListOf<Any?>()
+        for (index in 0 until array.length()) {
+            result.add(jsonValueToKotlin(array.get(index)))
         }
         return result
     }
@@ -101,9 +134,19 @@ class CapgoWatchListenerService : WearableListenerService() {
         @Volatile
         var registeredListener: CapgoWatchListener? = null
 
-        suspend fun awaitReply(callbackId: String, timeoutMs: Long = TimeUnit.MINUTES.toMillis(5)): ByteArray? {
-            val deferred = CompletableDeferred<ByteArray>()
-            pendingReplies[callbackId] = deferred
+        fun registerPendingReply(callbackId: String) {
+            pendingReplies[callbackId] = CompletableDeferred()
+        }
+
+        fun cancelPendingReply(callbackId: String) {
+            pendingReplies.remove(callbackId)
+        }
+
+        suspend fun awaitRegisteredReply(
+            callbackId: String,
+            timeoutMs: Long = TimeUnit.MINUTES.toMillis(5)
+        ): ByteArray? {
+            val deferred = pendingReplies[callbackId] ?: return null
             return withTimeoutOrNull(timeoutMs) { deferred.await() }
         }
     }

@@ -15,7 +15,6 @@ import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.UUID;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -52,19 +51,20 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             return;
         }
 
+        final boolean isReplyPath = CapgoWatchConstants.PATH_MESSAGE_WITH_REPLY.equals(path);
         final String payload = new String(event.getData(), StandardCharsets.UTF_8);
         try {
             final JSONObject json = new JSONObject(payload);
-            final String callbackId = CapgoWatchMessagePayload.extractCallbackId(json);
-            final JSObject messageData = CapgoWatchMessagePayload.toMessageData(json);
+            final String callbackId = CapgoWatchMessagePayload.extractCallbackId(json, isReplyPath);
+            final JSObject messageData = CapgoWatchMessagePayload.toMessageData(json, isReplyPath);
 
-            if (CapgoWatchConstants.PATH_MESSAGE_WITH_REPLY.equals(path)) {
+            if (isReplyPath) {
                 CapgoWatchPlugin.registerPendingReply(callbackId, event.getSourceNodeId());
 
                 final JSObject evt = new JSObject();
                 evt.put("message", messageData);
                 evt.put("callbackId", callbackId);
-                CapgoWatchEventBridge.dispatch("messageReceivedWithReply", evt, true);
+                CapgoWatchEventBridge.dispatch("messageReceivedWithReply", evt, true, event.getSourceNodeId());
             } else {
                 final JSObject evt = new JSObject();
                 evt.put("message", messageData);
@@ -83,7 +83,8 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             }
 
             final DataItem item = event.getDataItem();
-            final String path = item.getUri().getPath();
+            final Uri itemUri = item.getUri();
+            final String path = itemUri.getPath();
             if (path == null) {
                 continue;
             }
@@ -109,10 +110,13 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                     final JSObject evt = new JSObject();
                     evt.put("userInfo", data);
                     CapgoWatchEventBridge.dispatch("userInfoReceived", evt, true);
-                    Wearable.getDataClient(this).deleteDataItems(item.getUri());
+                    Wearable.getDataClient(this).deleteDataItems(itemUri);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
+                if (isUserInfo) {
+                    Wearable.getDataClient(this).deleteDataItems(itemUri);
+                }
             }
         }
     }

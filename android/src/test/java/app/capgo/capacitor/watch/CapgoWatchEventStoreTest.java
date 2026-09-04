@@ -1,7 +1,6 @@
 package app.capgo.capacitor.watch;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -9,7 +8,6 @@ import static org.junit.Assert.assertTrue;
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
 import com.getcapacitor.JSObject;
-import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -23,12 +21,7 @@ public class CapgoWatchEventStoreTest {
     @Before
     public void setUp() {
         final Context context = ApplicationProvider.getApplicationContext();
-        context.getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE).edit().clear().apply();
-        context
-            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
-            .edit()
-            .remove(CapgoWatchConstants.PREF_LAST_CONTEXT)
-            .apply();
+        context.getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE).edit().clear().commit();
         store = new CapgoWatchEventStore(context);
     }
 
@@ -46,17 +39,28 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void drainSkipsUnreadableEvents() throws Exception {
+    public void drainRetainsUnreadableEvents() {
         final Context context = ApplicationProvider.getApplicationContext();
         context
             .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
             .edit()
             .putString("events", "[{\"eventName\":\"messageReceived\",\"payload\":{\"ok\":true},\"timestamp\":1},{\"bad\":true}]")
-            .apply();
+            .commit();
 
         final var events = new CapgoWatchEventStore(context).drainAll();
         assertEquals(1, events.size());
-        assertEquals("messageReceived", events.get(0).eventName);
+        final var retained = new CapgoWatchEventStore(context).drainAll();
+        assertTrue(retained.isEmpty());
+    }
+
+    @Test
+    public void saveAndLoadPendingReply() {
+        store.savePendingReply("callback-1", "node-1");
+        final var pending = store.loadPendingReplies();
+        assertEquals(1, pending.size());
+        assertEquals("node-1", pending.get("callback-1").nodeId);
+        store.removePendingReply("callback-1");
+        assertTrue(store.loadPendingReplies().isEmpty());
     }
 
     @Test
