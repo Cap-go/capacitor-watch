@@ -14,30 +14,38 @@ import org.robolectric.RobolectricTestRunner;
 public class CapgoWatchMessagePayloadTest {
 
     @Test
-    public void extractCallbackIdUsesProvidedValue() throws Exception {
+    public void extractCallbackIdUsesProvidedEnvelopeValue() throws Exception {
         final JSONObject json = new JSONObject("{\"callbackId\":\"abc-123\",\"data\":{\"ok\":true}}");
-        assertEquals("abc-123", CapgoWatchMessagePayload.extractCallbackId(json));
+        assertEquals("abc-123", CapgoWatchMessagePayload.extractCallbackId(json, true));
     }
 
     @Test
-    public void extractCallbackIdGeneratesWhenMissing() throws Exception {
-        final JSONObject json = new JSONObject("{\"action\":\"ping\"}");
-        final String callbackId = CapgoWatchMessagePayload.extractCallbackId(json);
+    public void extractCallbackIdGeneratesForFlatReplyPathPayload() throws Exception {
+        final JSONObject json = new JSONObject("{\"action\":\"ping\",\"data\":\"value\"}");
+        final String callbackId = CapgoWatchMessagePayload.extractCallbackId(json, true);
         assertFalse(callbackId.isEmpty());
     }
 
     @Test
-    public void toMessageDataUsesNestedDataField() throws Exception {
+    public void toMessageDataUsesReplyEnvelope() throws Exception {
         final JSONObject json = new JSONObject("{\"callbackId\":\"abc\",\"data\":{\"action\":\"ping\"}}");
-        final JSObject message = CapgoWatchMessagePayload.toMessageData(json);
+        final JSObject message = CapgoWatchMessagePayload.toMessageData(json, true);
         assertEquals("ping", message.getString("action"));
     }
 
     @Test
-    public void toMessageDataStripsCallbackIdFromFlatPayload() throws Exception {
+    public void toMessageDataPreservesFlatUserFieldsOnReplyPath() throws Exception {
+        final JSONObject json = new JSONObject("{\"callbackId\":\"user-id\",\"data\":\"literal\"}");
+        final JSObject message = CapgoWatchMessagePayload.toMessageData(json, true);
+        assertEquals("user-id", message.getString("callbackId"));
+        assertEquals("literal", message.getString("data"));
+    }
+
+    @Test
+    public void toMessageDataPreservesFlatMessageOnRegularPath() throws Exception {
         final JSONObject json = new JSONObject("{\"callbackId\":\"abc\",\"action\":\"ping\"}");
-        final JSObject message = CapgoWatchMessagePayload.toMessageData(json);
+        final JSObject message = CapgoWatchMessagePayload.toMessageData(json, false);
         assertEquals("ping", message.getString("action"));
-        assertFalse(message.has("callbackId"));
+        assertEquals("abc", message.getString("callbackId"));
     }
 }

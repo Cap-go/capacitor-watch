@@ -26,14 +26,24 @@ public final class CapgoWatchEventBridge {
     }
 
     public static void dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
+        dispatch(eventName, payload, retainUntilConsumed, null);
+    }
+
+    public static void dispatch(
+        final String eventName,
+        final JSObject payload,
+        final boolean retainUntilConsumed,
+        final String replyNodeId
+    ) {
         final CapgoWatchPlugin plugin = pluginRef.get();
-        if (plugin != null) {
-            plugin.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
-            return;
+        final boolean shouldPersist = plugin == null || !plugin.hasWatchListeners(eventName);
+
+        if (shouldPersist && eventStore != null) {
+            eventStore.append(eventName, payload, replyNodeId);
         }
 
-        if (eventStore != null) {
-            eventStore.append(eventName, payload);
+        if (plugin != null) {
+            plugin.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
         }
     }
 

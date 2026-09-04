@@ -19,11 +19,8 @@ import com.google.android.gms.wearable.NodeClient;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
 import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,12 +37,9 @@ public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
     private static final String PLUGIN_VERSION = "8.1.3";
-
-    /** Pending reply callbacks expire after 5 minutes. */
     private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
 
-    private static final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
-    private static final Map<String, PendingOutgoingReply> pendingOutgoingReplies = new ConcurrentHashMap<>();
+    private static volatile CapgoWatchPendingReplyManager pendingReplyManager;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
@@ -60,28 +54,6 @@ public class CapgoWatchPlugin extends Plugin {
 
     private final CapabilityClient.OnCapabilityChangedListener capabilityChangedListener = (info) -> refreshReachability();
 
-    private static final class PendingReply {
-
-        final String nodeId;
-        final long createdAt;
-
-        PendingReply(final String nodeId, final long createdAt) {
-            this.nodeId = nodeId;
-            this.createdAt = createdAt;
-        }
-    }
-
-    static final class PendingOutgoingReply {
-
-        final PluginCall call;
-        final long createdAt;
-
-        PendingOutgoingReply(final PluginCall call, final long createdAt) {
-            this.call = call;
-            this.createdAt = createdAt;
-        }
-    }
-
     @Override
     public void load() {
         watchCapability = getConfig().getString("capability", CapgoWatchConstants.DEFAULT_CAPABILITY);
@@ -93,6 +65,9 @@ public class CapgoWatchPlugin extends Plugin {
         dataClient = Wearable.getDataClient(getContext());
         nodeClient = Wearable.getNodeClient(getContext());
         capabilityClient = Wearable.getCapabilityClient(getContext());
+
+        pendingReplyManager = new CapgoWatchPendingReplyManager(PENDING_REPLY_TTL_MS);
+        pendingReplyManager.initialize(messageClient, eventStore);
 
         capabilityClient
             .addListener(capabilityChangedListener, watchCapability)
@@ -108,7 +83,14 @@ public class CapgoWatchPlugin extends Plugin {
         if (capabilityClient != null) {
             capabilityClient.removeListener(capabilityChangedListener, watchCapability);
         }
+        if (pendingReplyManager != null) {
+            pendingReplyManager.shutdown();
+        }
         executor.shutdown();
+    }
+
+    boolean hasWatchListeners(final String eventName) {
+        return hasListeners(eventName);
     }
 
     void dispatchWatchEvent(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
@@ -116,16 +98,18 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     static void registerPendingReply(final String callbackId, final String nodeId) {
-        pendingReplies.put(callbackId, new PendingReply(nodeId, System.currentTimeMillis()));
+        if (pendingReplyManager != null) {
+            pendingReplyManager.registerIncoming(callbackId, nodeId);
+        }
     }
 
     static void handleIncomingReply(final String path, final byte[] data) {
-        if (!path.startsWith(CapgoWatchConstants.PATH_REPLY)) {
+        if (pendingReplyManager == null || !path.startsWith(CapgoWatchConstants.PATH_REPLY)) {
             return;
         }
 
         final String callbackId = path.substring(CapgoWatchConstants.PATH_REPLY.length());
-        final PendingOutgoingReply pending = pendingOutgoingReplies.remove(callbackId);
+        final CapgoWatchPendingReplyManager.OutgoingPendingReply pending = pendingReplyManager.removeOutgoing(callbackId);
         if (pending == null) {
             return;
         }
@@ -153,27 +137,13 @@ public class CapgoWatchPlugin extends Plugin {
 
     private void replayStoredEvents() {
         for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainAll()) {
+            if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
+                final String callbackId = storedEvent.payload.getString("callbackId", null);
+                if (callbackId != null) {
+                    registerPendingReply(callbackId, storedEvent.replyNodeId);
+                }
+            }
             dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, true);
-        }
-    }
-
-    private void expirePendingReplies() {
-        final long now = System.currentTimeMillis();
-        final Iterator<Map.Entry<String, PendingReply>> iterator = pendingReplies.entrySet().iterator();
-        while (iterator.hasNext()) {
-            final Map.Entry<String, PendingReply> entry = iterator.next();
-            if (now - entry.getValue().createdAt > PENDING_REPLY_TTL_MS) {
-                iterator.remove();
-            }
-        }
-
-        final Iterator<Map.Entry<String, PendingOutgoingReply>> outgoingIterator = pendingOutgoingReplies.entrySet().iterator();
-        while (outgoingIterator.hasNext()) {
-            final Map.Entry<String, PendingOutgoingReply> entry = outgoingIterator.next();
-            if (now - entry.getValue().createdAt > PENDING_REPLY_TTL_MS) {
-                entry.getValue().call.reject("Timed out waiting for watch reply");
-                outgoingIterator.remove();
-            }
         }
     }
 
@@ -203,6 +173,7 @@ public class CapgoWatchPlugin extends Plugin {
         final boolean expectsReply = Boolean.TRUE.equals(call.getBoolean("expectsReply", false));
 
         executor.execute(() -> {
+            String callbackId = null;
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 if (nodes.isEmpty()) {
@@ -211,12 +182,10 @@ public class CapgoWatchPlugin extends Plugin {
                 }
 
                 if (expectsReply) {
-                    final String callbackId = UUID.randomUUID().toString();
-                    pendingOutgoingReplies.put(callbackId, new PendingOutgoingReply(call, System.currentTimeMillis()));
+                    callbackId = UUID.randomUUID().toString();
+                    pendingReplyManager.registerOutgoing(callbackId, call);
 
-                    final JSONObject envelope = new JSONObject();
-                    envelope.put("callbackId", callbackId);
-                    envelope.put("data", new JSONObject(data.toString()));
+                    final JSONObject envelope = CapgoWatchMessagePayload.buildReplyEnvelope(callbackId, new JSONObject(data.toString()));
                     final byte[] payload = envelope.toString().getBytes(StandardCharsets.UTF_8);
 
                     for (final Node node : nodes) {
@@ -230,7 +199,11 @@ public class CapgoWatchPlugin extends Plugin {
                     call.resolve();
                 }
             } catch (ExecutionException | InterruptedException | JSONException e) {
-                call.reject("Failed to send message: " + e.getMessage(), e);
+                if (callbackId != null) {
+                    pendingReplyManager.rejectOutgoing(callbackId, "Failed to send message: " + e.getMessage());
+                } else {
+                    call.reject("Failed to send message: " + e.getMessage(), e);
+                }
             }
         });
     }
@@ -292,15 +265,13 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        expirePendingReplies();
-
-        final PendingReply pendingReply = pendingReplies.get(callbackId);
+        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = pendingReplyManager.getIncoming(callbackId);
         if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;
         }
         if (System.currentTimeMillis() - pendingReply.createdAt > PENDING_REPLY_TTL_MS) {
-            pendingReplies.remove(callbackId);
+            pendingReplyManager.removeIncoming(callbackId);
             call.reject("Pending reply expired for callbackId: " + callbackId);
             return;
         }
@@ -311,7 +282,7 @@ public class CapgoWatchPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
-                pendingReplies.remove(callbackId);
+                pendingReplyManager.removeIncoming(callbackId);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 call.reject("Failed to send reply: " + e.getMessage(), e);
@@ -353,10 +324,9 @@ public class CapgoWatchPlugin extends Plugin {
         executor.execute(() -> {
             JSObject context = eventStore.loadLastContext();
             if (context == null) {
+                DataItemBuffer buffer = null;
                 try {
-                    final DataItemBuffer buffer = Tasks.await(
-                        dataClient.getDataItems(Uri.parse("wear://*/" + CapgoWatchConstants.PATH_CONTEXT))
-                    );
+                    buffer = Tasks.await(dataClient.getDataItems(CapgoWatchConstants.contextDataItemUri()));
                     for (final DataItem item : buffer) {
                         final String payload = com.google.android.gms.wearable.DataMapItem.fromDataItem(item)
                             .getDataMap()
@@ -364,9 +334,12 @@ public class CapgoWatchPlugin extends Plugin {
                         context = new JSObject(new JSONObject(payload).toString());
                         eventStore.saveLastContext(context);
                     }
-                    buffer.release();
                 } catch (Exception e) {
                     Log.w(TAG, "Failed to load application context from Data Layer", e);
+                } finally {
+                    if (buffer != null) {
+                        buffer.release();
+                    }
                 }
             }
 

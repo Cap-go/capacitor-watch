@@ -25,28 +25,22 @@ dependencies {
 5. Register a listener in your watch app (for example in `Application.onCreate`):
 
 ```kotlin
-CapgoWatchListenerService.registeredListener = object : CapgoWatchListener {
-    override fun onMessageReceived(message: Map<String, Any?>) {
-        // handle phone message
-    }
-
-    override fun onMessageReceivedWithReply(message: Map<String, Any?>, callbackId: String) {
-        val watch = CapgoWatch.getInstance(this@MyWatchApplication)
-        // process and reply
-        lifecycleScope.launch {
-            watch.replyToMessage(callbackId, mapOf("status" to "ok"))
+class MyWatchApplication : Application(), CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) {
+    override fun onCreate() {
+        super.onCreate()
+        CapgoWatchListenerService.registeredListener = object : CapgoWatchListener {
+            override fun onMessageReceivedWithReply(message: Map<String, Any?>, callbackId: String) {
+                val watch = CapgoWatch.getInstance(this@MyWatchApplication)
+                launch {
+                    watch.replyToMessage(callbackId, mapOf("status" to "ok"))
+                }
+            }
         }
-    }
-
-    override fun onApplicationContextReceived(context: Map<String, Any?>) {
-        // latest phone context
-    }
-
-    override fun onUserInfoReceived(userInfo: Map<String, Any?>) {
-        // queued user info from phone
     }
 }
 ```
+
+Register `MyWatchApplication` in your Wear module `AndroidManifest.xml` with `android:name`.
 
 ## API
 

@@ -73,13 +73,17 @@ jobs:
       - name: Build
         id: build_code
         run: bun run verify:ios
-      - name: Run iOS unit tests
-        run: xcodebuild test -scheme CapgoCapacitorWatch -destination 'platform=iOS Simulator,name=iPhone 16' -quiet
-      - name: TypeScript tests
-        run: npm test
       - name: Verify packed package in example app (iOS)
         shell: bash
         run: bash ./.github/scripts/verify-packed-example.sh ios
+  test_ios:
+    runs-on: macOS-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Run iOS unit tests
+        run: xcodebuild test -scheme CapgoCapacitorWatch -destination 'platform=iOS Simulator,name=iPhone 16' -quiet
   web:
     runs-on: ubuntu-latest
     # Keep this job capped at 10 minutes; never raise it unless explicitly asked.
@@ -89,6 +93,10 @@ jobs:
       - name: Check out
         uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.x
       - name: Install dependencies
         id: install_code
         run: bun i

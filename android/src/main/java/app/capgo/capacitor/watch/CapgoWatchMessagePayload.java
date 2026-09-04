@@ -10,20 +10,35 @@ public final class CapgoWatchMessagePayload {
 
     private CapgoWatchMessagePayload() {}
 
-    public static String extractCallbackId(final JSONObject json) {
-        final String callbackId = json.optString("callbackId", "");
-        if (!callbackId.isEmpty()) {
-            return callbackId;
+    public static String extractCallbackId(final JSONObject json, final boolean isReplyPath) throws JSONException {
+        if (isReplyPath && isReplyEnvelope(json)) {
+            return json.getString("callbackId");
         }
         return UUID.randomUUID().toString();
     }
 
-    public static JSObject toMessageData(final JSONObject json) throws JSONException {
-        if (json.has("data") && json.get("data") instanceof JSONObject) {
+    public static JSObject toMessageData(final JSONObject json, final boolean isReplyPath) throws JSONException {
+        if (isReplyPath && isReplyEnvelope(json)) {
             return new JSObject(json.getJSONObject("data").toString());
         }
-        final JSONObject copy = new JSONObject(json.toString());
-        copy.remove("callbackId");
-        return new JSObject(copy.toString());
+        return new JSObject(json.toString());
+    }
+
+    static boolean isReplyEnvelope(final JSONObject json) {
+        if (!json.has("callbackId") || !json.has("data")) {
+            return false;
+        }
+        try {
+            return json.get("data") instanceof JSONObject;
+        } catch (JSONException e) {
+            return false;
+        }
+    }
+
+    public static JSONObject buildReplyEnvelope(final String callbackId, final JSONObject data) throws JSONException {
+        final JSONObject envelope = new JSONObject();
+        envelope.put("callbackId", callbackId);
+        envelope.put("data", data);
+        return envelope;
     }
 }
