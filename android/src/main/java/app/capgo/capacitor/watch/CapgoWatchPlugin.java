@@ -168,10 +168,13 @@ public class CapgoWatchPlugin extends Plugin {
         for (final CapgoWatchEventStore.StoredEvent storedEvent : storedEvents) {
             if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
                 final String callbackId = storedEvent.payload.getString("callbackId", null);
-                if (callbackId != null && pendingReplyManager != null && pendingReplyManager.getIncoming(callbackId) == null) {
+                if (callbackId != null && pendingReplyManager != null) {
                     final CapgoWatchEventStore.PendingReplyRecord record = eventStore.loadPendingReplies().get(callbackId);
                     final long createdAt = record != null ? record.createdAt : storedEvent.timestamp;
-                    if (System.currentTimeMillis() - createdAt <= PENDING_REPLY_TTL_MS) {
+                    if (System.currentTimeMillis() - createdAt > PENDING_REPLY_TTL_MS) {
+                        continue;
+                    }
+                    if (pendingReplyManager.getIncoming(callbackId) == null) {
                         pendingReplyManager.restoreIncoming(callbackId, storedEvent.replyNodeId, createdAt);
                     }
                 }

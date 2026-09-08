@@ -47,11 +47,8 @@ class CapgoWatchListenerService : WearableListenerService() {
                         val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                         val payload = dataMap.getString("payload", "{}")
                         val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
-                        try {
-                            dispatch { it.onUserInfoReceived(userInfo) }
-                        } finally {
-                            Wearable.getDataClient(this).deleteDataItems(itemUri)
-                        }
+                        dispatch { it.onUserInfoReceived(userInfo) }
+                        Wearable.getDataClient(this).deleteDataItems(itemUri)
                     }
                 }
             } catch (e: JSONException) {
@@ -82,6 +79,10 @@ class CapgoWatchListenerService : WearableListenerService() {
                 CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY -> {
                     val envelope = JSONObject(String(event.data))
                     val callbackId = envelope.optString("callbackId")
+                    if (callbackId.isEmpty()) {
+                        Log.w(TAG, "Skipping reply message without callbackId on path $path")
+                        return
+                    }
                     val data = envelope.optJSONObject("data")
                     val message = if (data == null) emptyMap() else CapgoWatchJson.objectToMap(data)
                     dispatch { it.onMessageReceivedWithReply(message, callbackId) }

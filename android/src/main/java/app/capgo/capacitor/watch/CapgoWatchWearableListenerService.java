@@ -124,9 +124,6 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
-                if (isUserInfo) {
-                    Wearable.getDataClient(this).deleteDataItems(itemUri);
-                }
             }
         }
     }
