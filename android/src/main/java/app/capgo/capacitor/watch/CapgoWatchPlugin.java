@@ -68,7 +68,11 @@ public class CapgoWatchPlugin extends Plugin {
 
         pendingReplyManager = new CapgoWatchPendingReplyManager(PENDING_REPLY_TTL_MS);
         pendingReplyManager.initialize(messageClient, eventStore);
+        final CapgoWatchPendingReplyManager previousManager = activePendingReplyManager;
         activePendingReplyManager = pendingReplyManager;
+        if (previousManager != null && previousManager != pendingReplyManager) {
+            previousManager.shutdown();
+        }
 
         capabilityClient
             .addListener(capabilityChangedListener, watchCapability)
@@ -162,8 +166,15 @@ public class CapgoWatchPlugin extends Plugin {
         for (final CapgoWatchEventStore.StoredEvent storedEvent : storedEvents) {
             if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
                 final String callbackId = storedEvent.payload.getString("callbackId", null);
-                if (callbackId != null && pendingReplyManager != null) {
-                    pendingReplyManager.registerIncoming(callbackId, storedEvent.replyNodeId);
+                if (callbackId != null && pendingReplyManager != null && pendingReplyManager.getIncoming(callbackId) == null) {
+                    final CapgoWatchEventStore.PendingReplyRecord record = eventStore.loadPendingReplies().get(callbackId);
+                    if (record != null) {
+                        if (System.currentTimeMillis() - record.createdAt <= PENDING_REPLY_TTL_MS) {
+                            pendingReplyManager.restoreIncoming(callbackId, record.nodeId, record.createdAt);
+                        }
+                    } else {
+                        pendingReplyManager.registerIncoming(callbackId, storedEvent.replyNodeId);
+                    }
                 }
             }
             dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, true);
@@ -196,6 +207,12 @@ public class CapgoWatchPlugin extends Plugin {
         final boolean expectsReply = Boolean.TRUE.equals(call.getBoolean("expectsReply", false));
 
         executor.execute(() -> {
+            final CapgoWatchPendingReplyManager manager = pendingReplyManager;
+            if (manager == null) {
+                call.reject("Watch plugin destroyed");
+                return;
+            }
+
             String callbackId = null;
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
@@ -206,7 +223,9 @@ public class CapgoWatchPlugin extends Plugin {
 
                 if (expectsReply) {
                     callbackId = UUID.randomUUID().toString();
-                    pendingReplyManager.registerOutgoing(callbackId, call);
+                    if (!manager.registerOutgoing(callbackId, call)) {
+                        return;
+                    }
 
                     final JSONObject envelope = CapgoWatchMessagePayload.buildReplyEnvelope(callbackId, new JSONObject(data.toString()));
                     final byte[] payload = envelope.toString().getBytes(StandardCharsets.UTF_8);
@@ -223,7 +242,7 @@ public class CapgoWatchPlugin extends Plugin {
                 }
             } catch (ExecutionException | InterruptedException | JSONException e) {
                 if (callbackId != null) {
-                    pendingReplyManager.rejectOutgoing(callbackId, "Failed to send message: " + e.getMessage());
+                    manager.rejectOutgoing(callbackId, "Failed to send message: " + e.getMessage());
                 } else {
                     call.reject("Failed to send message: " + e.getMessage(), e);
                 }

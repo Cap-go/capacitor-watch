@@ -6,9 +6,8 @@ import com.google.android.gms.wearable.MessageClient;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /** Tracks incoming/outgoing reply callbacks with scheduled expiry. */
@@ -17,17 +16,20 @@ final class CapgoWatchPendingReplyManager {
     private static final String TAG = "CapgoWatchPendingReplyMgr";
 
     private final long ttlMs;
-    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private final ScheduledThreadPoolExecutor scheduler;
     private final Map<String, IncomingPendingReply> incoming = new ConcurrentHashMap<>();
     private final Map<String, OutgoingPendingReply> outgoing = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> incomingExpiryTasks = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> outgoingExpiryTasks = new ConcurrentHashMap<>();
 
+    private volatile boolean shutdown = false;
     private volatile MessageClient messageClient;
     private volatile CapgoWatchEventStore eventStore;
 
     CapgoWatchPendingReplyManager(final long ttlMs) {
         this.ttlMs = ttlMs;
+        scheduler = new ScheduledThreadPoolExecutor(1);
+        scheduler.setRemoveOnCancelPolicy(true);
     }
 
     void initialize(final MessageClient messageClient, final CapgoWatchEventStore eventStore) {
@@ -37,6 +39,7 @@ final class CapgoWatchPendingReplyManager {
     }
 
     void shutdown() {
+        shutdown = true;
         for (final ScheduledFuture<?> task : incomingExpiryTasks.values()) {
             task.cancel(false);
         }
@@ -79,9 +82,14 @@ final class CapgoWatchPendingReplyManager {
         return incoming.get(callbackId);
     }
 
-    void registerOutgoing(final String callbackId, final PluginCall call) {
-        outgoing.put(callbackId, new OutgoingPendingReply(call, System.currentTimeMillis()));
+    boolean registerOutgoing(final String callbackId, final PluginCall call) {
+        if (shutdown) {
+            call.reject("Watch plugin destroyed");
+            return false;
+        }
+        outgoing.put(callbackId, new OutgoingPendingReply(call));
         scheduleOutgoingExpiry(callbackId);
+        return true;
     }
 
     OutgoingPendingReply removeOutgoing(final String callbackId) {
@@ -180,11 +188,9 @@ final class CapgoWatchPendingReplyManager {
     static final class OutgoingPendingReply {
 
         final PluginCall call;
-        final long createdAt;
 
-        OutgoingPendingReply(final PluginCall call, final long createdAt) {
+        OutgoingPendingReply(final PluginCall call) {
             this.call = call;
-            this.createdAt = createdAt;
         }
     }
 }

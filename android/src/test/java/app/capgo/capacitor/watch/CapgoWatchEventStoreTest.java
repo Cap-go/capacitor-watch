@@ -39,7 +39,7 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void drainRetainsUnreadableEvents() {
+    public void drainDropsUnreadableEvents() {
         final Context context = ApplicationProvider.getApplicationContext();
         context
             .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
@@ -49,8 +49,11 @@ public class CapgoWatchEventStoreTest {
 
         final var events = new CapgoWatchEventStore(context).drainAll();
         assertEquals(1, events.size());
-        final var retained = new CapgoWatchEventStore(context).drainAll();
-        assertTrue(retained.isEmpty());
+        final String rawEvents = context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .getString("events", "[]");
+        assertEquals("[]", rawEvents);
+        assertTrue(new CapgoWatchEventStore(context).drainAll().isEmpty());
     }
 
     @Test

@@ -47,6 +47,13 @@ public final class CapgoWatchEventBridge {
 
         if (eventStore != null) {
             eventStore.append(eventName, payload, replyNodeId);
+
+            final CapgoWatchPlugin pluginAfterAppend = pluginRef.get();
+            if (pluginAfterAppend != null && pluginAfterAppend.hasWatchListeners(eventName)) {
+                for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainEventsFor(eventName)) {
+                    pluginAfterAppend.dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, retainUntilConsumed);
+                }
+            }
         }
     }
 

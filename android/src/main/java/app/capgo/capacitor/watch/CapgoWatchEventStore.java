@@ -15,7 +15,7 @@ import org.json.JSONObject;
 
 /**
  * Persists watch events so they can be replayed after process restart.
- * Skips individual unreadable entries instead of failing the entire batch.
+ * Skips unreadable entries instead of failing the entire batch.
  */
 public class CapgoWatchEventStore {
 
@@ -84,17 +84,13 @@ public class CapgoWatchEventStore {
                 final String replyNodeId = entry.optString("replyNodeId", null);
                 drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId));
             } catch (JSONException e) {
-                Log.w(TAG, "Retaining unreadable stored event at index " + i, e);
-                try {
-                    retained.put(events.get(i));
-                } catch (JSONException retainError) {
-                    Log.w(TAG, "Dropping completely unreadable stored event at index " + i, retainError);
-                }
+                Log.w(TAG, "Dropping unreadable stored event at index " + i, e);
             }
         }
 
         if (!preferences.edit().putString(KEY_EVENTS, retained.toString()).commit()) {
             Log.w(TAG, "Failed to commit drained event store");
+            return new ArrayList<>();
         }
         return drained;
     }
