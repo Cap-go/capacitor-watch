@@ -35,8 +35,8 @@ public class CapgoWatchEventStoreTest {
 
         final var events = store.drainAll();
         assertEquals(CapgoWatchConstants.MAX_STORED_EVENTS, events.size());
-        assertEquals(5, events.get(0).payload.getInteger("index"));
-        assertEquals(CapgoWatchConstants.MAX_STORED_EVENTS + 4, events.get(events.size() - 1).payload.getInteger("index"));
+        assertEquals(5, events.get(0).payload.getInteger("index").intValue());
+        assertEquals(CapgoWatchConstants.MAX_STORED_EVENTS + 4, events.get(events.size() - 1).payload.getInteger("index").intValue());
     }
 
     @Test
