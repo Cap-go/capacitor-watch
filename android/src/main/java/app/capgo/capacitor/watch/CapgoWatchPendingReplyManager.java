@@ -135,13 +135,25 @@ final class CapgoWatchPendingReplyManager {
         try {
             incomingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireIncoming(callbackId), delayMs, TimeUnit.MILLISECONDS));
         } catch (RejectedExecutionException e) {
-            expireIncoming(callbackId);
+            abandonIncoming(callbackId);
         }
     }
 
     private void scheduleOutgoingExpiry(final String callbackId) {
         cancelOutgoingExpiry(callbackId);
-        outgoingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireOutgoing(callbackId), ttlMs, TimeUnit.MILLISECONDS));
+        try {
+            outgoingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireOutgoing(callbackId), ttlMs, TimeUnit.MILLISECONDS));
+        } catch (RejectedExecutionException e) {
+            outgoing.remove(callbackId);
+        }
+    }
+
+    private void abandonIncoming(final String callbackId) {
+        incoming.remove(callbackId);
+        incomingExpiryTasks.remove(callbackId);
+        if (eventStore != null) {
+            eventStore.removePendingReply(callbackId);
+        }
     }
 
     private void cancelIncomingExpiry(final String callbackId) {

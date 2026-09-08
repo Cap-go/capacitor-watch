@@ -6,7 +6,7 @@ import static org.junit.Assert.assertNull;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
-import com.getcapacitor.JSObject;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -16,6 +16,7 @@ import org.robolectric.RobolectricTestRunner;
 public class CapgoWatchPendingReplyManagerTest {
 
     private CapgoWatchEventStore eventStore;
+    private CapgoWatchPendingReplyManager manager;
 
     @Before
     public void setUp() {
@@ -24,24 +25,31 @@ public class CapgoWatchPendingReplyManagerTest {
         eventStore = new CapgoWatchEventStore(context);
     }
 
+    @After
+    public void tearDown() {
+        if (manager != null) {
+            manager.shutdown();
+            manager = null;
+        }
+    }
+
     @Test
-    public void restoreIncomingSchedulesExpiryFromCreatedAt() {
-        final CapgoWatchPendingReplyManager manager = new CapgoWatchPendingReplyManager(100L);
+    public void restoreIncomingSchedulesExpiryFromCreatedAt() throws InterruptedException {
+        final long ttlMs = 200L;
+        manager = new CapgoWatchPendingReplyManager(ttlMs);
         manager.initialize(null, eventStore);
 
-        final long createdAt = System.currentTimeMillis() - 90L;
+        final long createdAt = System.currentTimeMillis() - (ttlMs - 80L);
         manager.restoreIncoming("callback-1", "node-1", createdAt);
 
         final CapgoWatchPendingReplyManager.IncomingPendingReply pending = manager.getIncoming("callback-1");
         assertNotNull(pending);
         assertEquals("node-1", pending.nodeId);
 
-        try {
-            Thread.sleep(150L);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        Thread.sleep(40L);
+        assertNotNull(manager.getIncoming("callback-1"));
 
+        Thread.sleep(60L);
         assertNull(manager.getIncoming("callback-1"));
     }
 }
