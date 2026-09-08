@@ -82,7 +82,8 @@ public class CapgoWatchEventStore {
                 }
                 final JSONObject payloadJson = entry.getJSONObject("payload");
                 final String replyNodeId = entry.optString("replyNodeId", null);
-                drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId));
+                final long timestamp = entry.optLong("timestamp", System.currentTimeMillis());
+                drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId, timestamp));
             } catch (JSONException e) {
                 Log.w(TAG, "Dropping unreadable stored event at index " + i, e);
             }
@@ -184,11 +185,13 @@ public class CapgoWatchEventStore {
         public final String eventName;
         public final JSObject payload;
         public final String replyNodeId;
+        public final long timestamp;
 
-        StoredEvent(final String eventName, final JSObject payload, final String replyNodeId) {
+        StoredEvent(final String eventName, final JSObject payload, final String replyNodeId, final long timestamp) {
             this.eventName = eventName;
             this.payload = payload;
             this.replyNodeId = replyNodeId;
+            this.timestamp = timestamp;
         }
     }
 

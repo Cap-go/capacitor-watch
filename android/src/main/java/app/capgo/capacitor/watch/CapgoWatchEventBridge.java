@@ -28,6 +28,12 @@ public final class CapgoWatchEventBridge {
         }
     }
 
+    public static void savePendingReply(final String callbackId, final String nodeId) {
+        if (eventStore != null) {
+            eventStore.savePendingReply(callbackId, nodeId);
+        }
+    }
+
     public static void dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
         dispatch(eventName, payload, retainUntilConsumed, null);
     }

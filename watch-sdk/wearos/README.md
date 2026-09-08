@@ -12,6 +12,8 @@ include ':capgo-watch-sdk'
 project(':capgo-watch-sdk').projectDir = new File('../path/to/capacitor-watch/watch-sdk/wearos')
 ```
 
+Your Wear project root `build.gradle` must apply the Kotlin Android plugin (for example `id 'org.jetbrains.kotlin.android' version '2.1.10' apply false` in the plugins block).
+
 3. In your Wear module `build.gradle`, add the dependency:
 
 ```gradle

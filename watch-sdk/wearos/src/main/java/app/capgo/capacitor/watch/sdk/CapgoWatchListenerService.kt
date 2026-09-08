@@ -8,9 +8,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -36,6 +34,7 @@ class CapgoWatchListenerService : WearableListenerService() {
                 continue
             }
 
+            val isUserInfo = path.startsWith(CapgoWatchPaths.PATH_USER_INFO)
             try {
                 when {
                     path == CapgoWatchPaths.PATH_CONTEXT -> {
@@ -44,17 +43,20 @@ class CapgoWatchListenerService : WearableListenerService() {
                         val context = CapgoWatchJson.objectToMap(JSONObject(payload))
                         dispatch { it.onApplicationContextReceived(context) }
                     }
-                    path.startsWith(CapgoWatchPaths.PATH_USER_INFO) -> {
+                    isUserInfo -> {
                         val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
                         val payload = dataMap.getString("payload", "{}")
                         val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
-                        dispatch { it.onUserInfoReceived(userInfo) }
-                        Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        try {
+                            dispatch { it.onUserInfoReceived(userInfo) }
+                        } finally {
+                            Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        }
                     }
                 }
             } catch (e: JSONException) {
                 Log.e(TAG, "Failed to parse data change on path $path", e)
-                if (path.startsWith(CapgoWatchPaths.PATH_USER_INFO)) {
+                if (isUserInfo) {
                     Wearable.getDataClient(this).deleteDataItems(itemUri)
                 }
             } catch (e: Exception) {
@@ -71,18 +73,24 @@ class CapgoWatchListenerService : WearableListenerService() {
             return
         }
 
-        when (path) {
-            CapgoWatchPaths.PATH_MESSAGE -> {
-                val message = parsePayload(event.data)
-                dispatch { it.onMessageReceived(message) }
+        try {
+            when (path) {
+                CapgoWatchPaths.PATH_MESSAGE -> {
+                    val message = parsePayload(event.data)
+                    dispatch { it.onMessageReceived(message) }
+                }
+                CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY -> {
+                    val envelope = JSONObject(String(event.data))
+                    val callbackId = envelope.optString("callbackId")
+                    val data = envelope.optJSONObject("data")
+                    val message = if (data == null) emptyMap() else CapgoWatchJson.objectToMap(data)
+                    dispatch { it.onMessageReceivedWithReply(message, callbackId) }
+                }
             }
-            CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY -> {
-                val envelope = JSONObject(String(event.data))
-                val callbackId = envelope.optString("callbackId")
-                val data = envelope.optJSONObject("data")
-                val message = if (data == null) emptyMap() else CapgoWatchJson.objectToMap(data)
-                dispatch { it.onMessageReceivedWithReply(message, callbackId) }
-            }
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to parse message on path $path", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to handle message on path $path", e)
         }
     }
 
@@ -115,14 +123,6 @@ class CapgoWatchListenerService : WearableListenerService() {
 
         fun cancelPendingReply(callbackId: String) {
             pendingReplies.remove(callbackId)
-        }
-
-        suspend fun awaitRegisteredReply(
-            callbackId: String,
-            timeoutMs: Long = TimeUnit.MINUTES.toMillis(5)
-        ): ByteArray? {
-            val deferred = pendingReplies[callbackId] ?: return null
-            return withTimeoutOrNull(timeoutMs) { deferred.await() }
         }
     }
 }
