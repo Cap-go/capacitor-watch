@@ -46,7 +46,7 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void appendDropsExpiredEvents() {
+    public void appendDropsExpiredEvents() throws Exception {
         final Context context = ApplicationProvider.getApplicationContext();
         final long expiredAt = System.currentTimeMillis() - CapgoWatchConstants.MAX_EVENT_RETENTION_MS - 1_000L;
         context
