@@ -221,6 +221,21 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
     func notifyWatchEvent(_ eventName: String, data: [String: Any]) {
         notifyListeners(eventName, data: data, retainUntilConsumed: true)
     }
+
+    deinit {
+        replyLock.lock()
+        let handlers = pendingReplies
+        pendingReplies.removeAll()
+        for (_, task) in pendingReplyTimers {
+            task.cancel()
+        }
+        pendingReplyTimers.removeAll()
+        replyLock.unlock()
+
+        for (_, handler) in handlers {
+            handler([:])
+        }
+    }
 }
 
 // MARK: - WatchSessionDelegate

@@ -6,6 +6,7 @@ import com.google.android.gms.wearable.MessageClient;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +17,7 @@ final class CapgoWatchPendingReplyManager {
     private static final String TAG = "CapgoWatchPendingReplyMgr";
 
     private final long ttlMs;
+    private final Object lifecycleLock = new Object();
     private final ScheduledThreadPoolExecutor scheduler;
     private final Map<String, IncomingPendingReply> incoming = new ConcurrentHashMap<>();
     private final Map<String, OutgoingPendingReply> outgoing = new ConcurrentHashMap<>();
@@ -39,22 +41,24 @@ final class CapgoWatchPendingReplyManager {
     }
 
     void shutdown() {
-        shutdown = true;
-        for (final ScheduledFuture<?> task : incomingExpiryTasks.values()) {
-            task.cancel(false);
-        }
-        for (final ScheduledFuture<?> task : outgoingExpiryTasks.values()) {
-            task.cancel(false);
-        }
-        incomingExpiryTasks.clear();
-        outgoingExpiryTasks.clear();
+        synchronized (lifecycleLock) {
+            shutdown = true;
+            for (final ScheduledFuture<?> task : incomingExpiryTasks.values()) {
+                task.cancel(false);
+            }
+            for (final ScheduledFuture<?> task : outgoingExpiryTasks.values()) {
+                task.cancel(false);
+            }
+            incomingExpiryTasks.clear();
+            outgoingExpiryTasks.clear();
 
-        for (final OutgoingPendingReply pending : outgoing.values()) {
-            pending.call.reject("Watch plugin destroyed");
+            for (final OutgoingPendingReply pending : outgoing.values()) {
+                pending.call.reject("Watch plugin destroyed");
+            }
+            outgoing.clear();
+            incoming.clear();
+            scheduler.shutdownNow();
         }
-        outgoing.clear();
-        incoming.clear();
-        scheduler.shutdownNow();
     }
 
     void registerIncoming(final String callbackId, final String nodeId) {
@@ -83,13 +87,21 @@ final class CapgoWatchPendingReplyManager {
     }
 
     boolean registerOutgoing(final String callbackId, final PluginCall call) {
-        if (shutdown) {
-            call.reject("Watch plugin destroyed");
-            return false;
+        synchronized (lifecycleLock) {
+            if (shutdown) {
+                call.reject("Watch plugin destroyed");
+                return false;
+            }
+            outgoing.put(callbackId, new OutgoingPendingReply(call));
+            try {
+                scheduleOutgoingExpiry(callbackId);
+            } catch (RejectedExecutionException e) {
+                outgoing.remove(callbackId);
+                call.reject("Watch plugin destroyed");
+                return false;
+            }
+            return true;
         }
-        outgoing.put(callbackId, new OutgoingPendingReply(call));
-        scheduleOutgoingExpiry(callbackId);
-        return true;
     }
 
     OutgoingPendingReply removeOutgoing(final String callbackId) {
@@ -120,7 +132,11 @@ final class CapgoWatchPendingReplyManager {
     private void scheduleIncomingExpiry(final String callbackId, final long createdAt) {
         cancelIncomingExpiry(callbackId);
         final long delayMs = Math.max(0L, ttlMs - (System.currentTimeMillis() - createdAt));
-        incomingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireIncoming(callbackId), delayMs, TimeUnit.MILLISECONDS));
+        try {
+            incomingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireIncoming(callbackId), delayMs, TimeUnit.MILLISECONDS));
+        } catch (RejectedExecutionException e) {
+            expireIncoming(callbackId);
+        }
     }
 
     private void scheduleOutgoingExpiry(final String callbackId) {

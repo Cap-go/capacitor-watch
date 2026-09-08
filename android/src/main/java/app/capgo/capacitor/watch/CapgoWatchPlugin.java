@@ -119,7 +119,9 @@ public class CapgoWatchPlugin extends Plugin {
         final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
         if (manager != null) {
             manager.registerIncoming(callbackId, nodeId);
+            return;
         }
+        CapgoWatchEventBridge.savePendingReply(callbackId, nodeId);
     }
 
     static void handleIncomingReply(final String path, final byte[] data) {
@@ -168,12 +170,9 @@ public class CapgoWatchPlugin extends Plugin {
                 final String callbackId = storedEvent.payload.getString("callbackId", null);
                 if (callbackId != null && pendingReplyManager != null && pendingReplyManager.getIncoming(callbackId) == null) {
                     final CapgoWatchEventStore.PendingReplyRecord record = eventStore.loadPendingReplies().get(callbackId);
-                    if (record != null) {
-                        if (System.currentTimeMillis() - record.createdAt <= PENDING_REPLY_TTL_MS) {
-                            pendingReplyManager.restoreIncoming(callbackId, record.nodeId, record.createdAt);
-                        }
-                    } else {
-                        pendingReplyManager.registerIncoming(callbackId, storedEvent.replyNodeId);
+                    final long createdAt = record != null ? record.createdAt : storedEvent.timestamp;
+                    if (System.currentTimeMillis() - createdAt <= PENDING_REPLY_TTL_MS) {
+                        pendingReplyManager.restoreIncoming(callbackId, storedEvent.replyNodeId, createdAt);
                     }
                 }
             }
