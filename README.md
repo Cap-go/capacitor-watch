@@ -508,6 +508,7 @@ struct StatusView: View {
 <docgen-index>
 
 * [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(...)`](#sendmessage)
 * [`updateApplicationContext(...)`](#updateapplicationcontext)
 * [`transferUserInfo(...)`](#transferuserinfo)
 * [`replyToMessage(...)`](#replytomessage)
@@ -539,20 +540,33 @@ Provides bidirectional messaging between the phone and a paired watch.
 ### sendMessage(...)
 
 ```typescript
-sendMessage(options: SendMessageOptions) => Promise<void | SendMessageResult>
+sendMessage(options: SendMessageOptionsWithReply) => Promise<SendMessageResult>
 ```
 
 Send an interactive message to the watch.
 The watch must be reachable for this to succeed.
 Use this for time-sensitive, interactive communication.
 
-| Param         | Type                                                              | Description           |
-| ------------- | ----------------------------------------------------------------- | --------------------- |
-| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> | - The message options |
+| Param         | Type                                                                                | Description           |
+| ------------- | ----------------------------------------------------------------------------------- | --------------------- |
+| **`options`** | <code><a href="#sendmessageoptionswithreply">SendMessageOptionsWithReply</a></code> | - The message options |
 
-**Returns:** <code>Promise&lt;void | <a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
+**Returns:** <code>Promise&lt;<a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
 **Since:** 8.0.0
+
+--------------------
+
+
+### sendMessage(...)
+
+```typescript
+sendMessage(options: SendMessageOptions) => Promise<void>
+```
+
+| Param         | Type                                                              |
+| ------------- | ----------------------------------------------------------------- |
+| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> |
 
 --------------------
 
@@ -802,6 +816,15 @@ Result returned when `sendMessage` is called with `expectsReply: true`.
 | Prop        | Type                                                                  | Description                                                                   |
 | ----------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | **`reply`** | <code><a href="#watchmessagedata">WatchMessageData</a> \| null</code> | Reply payload from the watch, or null when the watch returned an empty reply. |
+
+
+#### SendMessageOptionsWithReply
+
+Options for sending a message that expects a reply from the watch.
+
+| Prop               | Type              | Description                                                                                                                     |
+| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **`expectsReply`** | <code>true</code> | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). |
 
 
 #### SendMessageOptions

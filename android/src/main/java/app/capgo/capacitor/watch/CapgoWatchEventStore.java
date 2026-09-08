@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 import com.getcapacitor.JSObject;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -46,7 +47,8 @@ public class CapgoWatchEventStore {
                     entry.put("replyNodeId", replyNodeId);
                 }
                 events.put(entry);
-                if (!preferences.edit().putString(KEY_EVENTS, events.toString()).commit()) {
+                final JSONArray bounded = enforceEventQueueLimits(events);
+                if (!preferences.edit().putString(KEY_EVENTS, bounded.toString()).commit()) {
                     Log.w(TAG, "Failed to commit persisted event " + eventName);
                 }
             } catch (JSONException e) {
@@ -158,6 +160,36 @@ public class CapgoWatchEventStore {
                 return null;
             }
         }
+    }
+
+    private JSONArray enforceEventQueueLimits(final JSONArray events) {
+        final long now = System.currentTimeMillis();
+        final JSONArray retained = new JSONArray();
+
+        for (int i = 0; i < events.length(); i++) {
+            try {
+                final JSONObject entry = events.getJSONObject(i);
+                final long timestamp = entry.optLong("timestamp", now);
+                if (now - timestamp <= CapgoWatchConstants.MAX_EVENT_RETENTION_MS) {
+                    retained.put(entry);
+                }
+            } catch (JSONException e) {
+                Log.w(TAG, "Dropping unreadable stored event at index " + i, e);
+            }
+        }
+
+        while (retained.length() > CapgoWatchConstants.MAX_STORED_EVENTS) {
+            retained.remove(0);
+        }
+
+        while (
+            retained.length() > 0 &&
+            retained.toString().getBytes(StandardCharsets.UTF_8).length > CapgoWatchConstants.MAX_STORED_EVENTS_BYTES
+        ) {
+            retained.remove(0);
+        }
+
+        return retained;
     }
 
     private JSONArray readEventsArray() {

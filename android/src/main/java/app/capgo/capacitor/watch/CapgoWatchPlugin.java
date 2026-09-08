@@ -309,13 +309,12 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = pendingReplyManager.getIncoming(callbackId);
+        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = pendingReplyManager.claimIncoming(callbackId);
         if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;
         }
         if (System.currentTimeMillis() - pendingReply.createdAt > PENDING_REPLY_TTL_MS) {
-            pendingReplyManager.removeIncoming(callbackId);
             call.reject("Pending reply expired for callbackId: " + callbackId);
             return;
         }
@@ -326,7 +325,6 @@ public class CapgoWatchPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
-                pendingReplyManager.removeIncoming(callbackId);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 call.reject("Failed to send reply: " + e.getMessage(), e);
