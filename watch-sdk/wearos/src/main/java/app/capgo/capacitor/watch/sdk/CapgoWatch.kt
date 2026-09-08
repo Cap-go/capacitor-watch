@@ -7,8 +7,9 @@ import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.tasks.await
-import org.json.JSONArray
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -36,27 +37,26 @@ class CapgoWatch private constructor(private val appContext: Context) {
 
     suspend fun sendMessageForReply(data: Map<String, Any?>): Map<String, Any?> {
         val callbackId = UUID.randomUUID().toString()
-        CapgoWatchListenerService.registerPendingReply(callbackId)
         val envelope = JSONObject()
         envelope.put("callbackId", callbackId)
         envelope.put("data", JSONObject(data))
         val payload = envelope.toString().toByteArray()
         val nodes = connectedPhoneNodes()
         if (nodes.isEmpty()) {
-            CapgoWatchListenerService.cancelPendingReply(callbackId)
             throw IllegalStateException("No connected phone nodes found")
         }
 
+        val deferred = CapgoWatchListenerService.registerPendingReply(callbackId)
         try {
             for (node in nodes) {
                 messageClient.sendMessage(node.id, CapgoWatchPaths.PATH_MESSAGE_WITH_REPLY, payload).await()
             }
-            val replyBytes = CapgoWatchListenerService.awaitRegisteredReply(callbackId)
+            val replyBytes = withTimeoutOrNull(TimeUnit.MINUTES.toMillis(5)) { deferred.await() }
                 ?: throw IllegalStateException("Timed out waiting for phone reply")
             if (replyBytes.isEmpty()) {
                 return emptyMap()
             }
-            return jsonObjectToMap(JSONObject(String(replyBytes)))
+            return CapgoWatchJson.objectToMap(JSONObject(String(replyBytes)))
         } finally {
             CapgoWatchListenerService.cancelPendingReply(callbackId)
         }
@@ -98,33 +98,6 @@ class CapgoWatch private constructor(private val appContext: Context) {
             return capabilityNodes.toList()
         }
         return nodeClient.connectedNodes.await()
-    }
-
-    private fun jsonValueToKotlin(value: Any?): Any? {
-        return when (value) {
-            is JSONObject -> jsonObjectToMap(value)
-            is JSONArray -> jsonArrayToList(value)
-            JSONObject.NULL -> null
-            else -> value
-        }
-    }
-
-    private fun jsonObjectToMap(json: JSONObject): Map<String, Any?> {
-        val result = mutableMapOf<String, Any?>()
-        val keys = json.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            result[key] = jsonValueToKotlin(json.get(key))
-        }
-        return result
-    }
-
-    private fun jsonArrayToList(array: JSONArray): List<Any?> {
-        val result = mutableListOf<Any?>()
-        for (index in 0 until array.length()) {
-            result.add(jsonValueToKotlin(array.get(index)))
-        }
-        return result
     }
 
     companion object {
