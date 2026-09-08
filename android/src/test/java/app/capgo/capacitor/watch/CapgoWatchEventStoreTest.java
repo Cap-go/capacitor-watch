@@ -26,6 +26,39 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
+    public void appendEvictsOldestEventsWhenOverCountLimit() {
+        for (int i = 0; i < CapgoWatchConstants.MAX_STORED_EVENTS + 5; i++) {
+            final JSObject payload = new JSObject();
+            payload.put("index", i);
+            store.append("messageReceived", payload);
+        }
+
+        final var events = store.drainAll();
+        assertEquals(CapgoWatchConstants.MAX_STORED_EVENTS, events.size());
+        assertEquals(5, events.get(0).payload.getInteger("index"));
+        assertEquals(CapgoWatchConstants.MAX_STORED_EVENTS + 4, events.get(events.size() - 1).payload.getInteger("index"));
+    }
+
+    @Test
+    public void appendDropsExpiredEvents() {
+        final Context context = ApplicationProvider.getApplicationContext();
+        final long expiredAt = System.currentTimeMillis() - CapgoWatchConstants.MAX_EVENT_RETENTION_MS - 1_000L;
+        context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .edit()
+            .putString("events", "[{\"eventName\":\"messageReceived\",\"payload\":{\"stale\":true},\"timestamp\":" + expiredAt + "}]")
+            .commit();
+
+        final JSObject payload = new JSObject();
+        payload.put("fresh", true);
+        new CapgoWatchEventStore(context).append("messageReceived", payload);
+
+        final var events = new CapgoWatchEventStore(context).drainAll();
+        assertEquals(1, events.size());
+        assertEquals(true, events.get(0).payload.getBoolean("fresh"));
+    }
+
+    @Test
     public void appendAndDrainEvents() {
         final JSObject payload = new JSObject();
         payload.put("action", "ping");

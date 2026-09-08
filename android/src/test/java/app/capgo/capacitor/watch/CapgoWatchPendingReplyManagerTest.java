@@ -34,6 +34,19 @@ public class CapgoWatchPendingReplyManagerTest {
     }
 
     @Test
+    public void claimIncomingRemovesPendingReply() {
+        manager = new CapgoWatchPendingReplyManager(60_000L);
+        manager.initialize(null, eventStore);
+        manager.registerIncoming("callback-1", "node-1");
+
+        final CapgoWatchPendingReplyManager.IncomingPendingReply claimed = manager.claimIncoming("callback-1");
+        assertNotNull(claimed);
+        assertEquals("node-1", claimed.nodeId);
+        assertNull(manager.getIncoming("callback-1"));
+        assertNull(manager.claimIncoming("callback-1"));
+    }
+
+    @Test
     public void restoreIncomingSchedulesExpiryFromCreatedAt() throws InterruptedException {
         final long ttlMs = 200L;
         manager = new CapgoWatchPendingReplyManager(ttlMs);

@@ -4,6 +4,7 @@ import type {
   CapgoWatchPlugin,
   ReceivedState,
   SendMessageOptions,
+  SendMessageOptionsWithReply,
   SendMessageResult,
   UpdateContextOptions,
   TransferUserInfoOptions,
@@ -12,6 +13,8 @@ import type {
 } from './definitions';
 
 export class CapgoWatchWeb extends WebPlugin implements CapgoWatchPlugin {
+  async sendMessage(_options: SendMessageOptionsWithReply): Promise<SendMessageResult>;
+  async sendMessage(_options: SendMessageOptions): Promise<void>;
   async sendMessage(_options: SendMessageOptions): Promise<void | SendMessageResult> {
     throw this.unavailable('Watch is not available on web');
   }

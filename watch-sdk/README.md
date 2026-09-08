@@ -5,7 +5,7 @@ Companion SDKs for watch apps communicating with `@capgo/capacitor-watch` on the
 - **watchOS (Swift)**: `watch-sdk/` — `CapgoWatchSDK` with `WatchConnector`
 - **Wear OS (Kotlin)**: `watch-sdk/wearos/` — `CapgoWatch` with `CapgoWatchListenerService`
 
-See `watch-sdk/wearos/README.md` for Wear OS setup.
+See [the Wear OS setup guide](wearos/README.md).
 
 ## watchOS Installation
 

@@ -30,6 +30,15 @@ export interface SendMessageOptions {
 }
 
 /**
+ * Options for sending a message that expects a reply from the watch.
+ *
+ * @since 8.2.0
+ */
+export interface SendMessageOptionsWithReply extends SendMessageOptions {
+  expectsReply: true;
+}
+
+/**
  * Result returned when `sendMessage` is called with `expectsReply: true`.
  *
  * @since 8.2.0
@@ -267,7 +276,8 @@ export interface CapgoWatchPlugin {
    * });
    * ```
    */
-  sendMessage(options: SendMessageOptions): Promise<void | SendMessageResult>;
+  sendMessage(options: SendMessageOptionsWithReply): Promise<SendMessageResult>;
+  sendMessage(options: SendMessageOptions): Promise<void>;
 
   /**
    * Update the application context shared with the watch.

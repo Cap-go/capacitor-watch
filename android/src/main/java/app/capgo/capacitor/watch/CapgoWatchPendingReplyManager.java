@@ -74,12 +74,16 @@ final class CapgoWatchPendingReplyManager {
         scheduleIncomingExpiry(callbackId, createdAt);
     }
 
-    IncomingPendingReply removeIncoming(final String callbackId) {
+    IncomingPendingReply claimIncoming(final String callbackId) {
         cancelIncomingExpiry(callbackId);
         if (eventStore != null) {
             eventStore.removePendingReply(callbackId);
         }
         return incoming.remove(callbackId);
+    }
+
+    IncomingPendingReply removeIncoming(final String callbackId) {
+        return claimIncoming(callbackId);
     }
 
     IncomingPendingReply getIncoming(final String callbackId) {

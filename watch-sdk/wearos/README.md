@@ -47,23 +47,27 @@ Register `MyWatchApplication` in your Wear module `AndroidManifest.xml` with `an
 ## API
 
 ```kotlin
-val watch = CapgoWatch.getInstance(context)
-watch.capability = "capgo_watch" // optional, default capgo_watch
+suspend fun syncWithPhone(watch: CapgoWatch, callbackId: String) {
+    watch.capability = "capgo_watch" // optional, default capgo_watch
 
-// One-way message to phone
-watch.sendMessage(mapOf("action" to "ping"))
+    // One-way message to phone
+    watch.sendMessage(mapOf("action" to "ping"))
 
-// Message expecting a reply from phone
-val reply = watch.sendMessageForReply(mapOf("action" to "getState"))
+    // Message expecting a reply from phone
+    val reply = watch.sendMessageForReply(mapOf("action" to "getState"))
 
-// Sync latest application context to phone
-watch.updateApplicationContext(mapOf("heartRate" to 72))
+    // Sync latest application context to phone
+    watch.updateApplicationContext(mapOf("heartRate" to 72))
 
-// Reliable queued transfer
-watch.transferUserInfo(mapOf("workoutId" to "abc"))
+    // Reliable queued transfer
+    watch.transferUserInfo(mapOf("workoutId" to "abc"))
 
-// Reply to a phone message that used /capgo/message/withreply
-watch.replyToMessage(callbackId, mapOf("status" to "ok"))
+    // Reply to a phone message that used /capgo/message/withreply
+    watch.replyToMessage(callbackId, mapOf("status" to "ok"))
+}
+
+// Example usage from a lifecycle-aware component:
+// lifecycleScope.launch { syncWithPhone(CapgoWatch.getInstance(context), callbackId) }
 ```
 
 ## Phone paths
