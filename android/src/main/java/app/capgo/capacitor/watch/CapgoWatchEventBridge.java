@@ -28,10 +28,14 @@ public final class CapgoWatchEventBridge {
         }
     }
 
-    public static void savePendingReply(final String callbackId, final String nodeId) {
+    /**
+     * @return {@code true} when persisted (or no store); {@code false} when rejected at capacity
+     */
+    public static boolean savePendingReply(final String callbackId, final String nodeId) {
         if (eventStore != null) {
-            eventStore.savePendingReply(callbackId, nodeId);
+            return eventStore.savePendingReply(callbackId, nodeId);
         }
+        return false;
     }
 
     public static void dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {

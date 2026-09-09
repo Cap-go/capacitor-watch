@@ -61,16 +61,18 @@ final class CapgoWatchPendingReplyManager {
         }
     }
 
-    void registerIncoming(final String callbackId, final String nodeId) {
+    /**
+     * @return {@code false} when durable capacity rejects the registration (caller must
+     *         settle the watch and suppress {@code messageReceivedWithReply})
+     */
+    boolean registerIncoming(final String callbackId, final String nodeId) {
         if (eventStore != null && !eventStore.savePendingReply(callbackId, nodeId)) {
-            // Capacity reject: do not keep a non-durable in-memory registration.
-            // Explicitly settle the watch with an empty reply instead of silently dropping.
             Log.w(TAG, "Rejecting incoming reply callbackId=" + callbackId + " at pending-reply capacity");
-            sendReplyToWatch(nodeId, callbackId, "{}");
-            return;
+            return false;
         }
         incoming.put(callbackId, new IncomingPendingReply(nodeId, System.currentTimeMillis()));
         scheduleIncomingExpiry(callbackId);
+        return true;
     }
 
     void restoreIncoming(final String callbackId, final String nodeId, final long createdAt) {
