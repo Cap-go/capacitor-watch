@@ -35,6 +35,11 @@ export interface SendMessageOptions {
  * @since 8.2.0
  */
 export interface SendMessageOptionsWithReply extends SendMessageOptions {
+  /**
+   * The data to send to the watch.
+   * Must be serializable (string, number, boolean, arrays, or nested objects).
+   */
+  data: WatchMessageData;
   expectsReply: true;
 }
 
@@ -284,7 +289,16 @@ export interface CapgoWatchPlugin {
    * @returns Promise that resolves when the message is sent
    * @since 8.0.0
    */
-  sendMessage(options: SendMessageOptions): Promise<void>;
+  sendMessage(options: SendMessageOptions & { expectsReply?: false }): Promise<void>;
+  /**
+   * Send an interactive message when `expectsReply` is not known statically.
+   * Prefer the overloads above when `expectsReply` is a boolean literal.
+   *
+   * @param options - The message options
+   * @returns Promise that resolves with a reply when `expectsReply` is true at runtime
+   * @since 8.2.0
+   */
+  sendMessage(options: SendMessageOptions): Promise<void | SendMessageResult>;
 
   /**
    * Update the application context shared with the watch.

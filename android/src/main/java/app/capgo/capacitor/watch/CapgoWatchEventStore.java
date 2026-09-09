@@ -86,6 +86,9 @@ public class CapgoWatchEventStore {
                 final long timestamp = entry.optLong("timestamp", now);
                 if (now - timestamp > CapgoWatchConstants.MAX_EVENT_RETENTION_MS) {
                     // Discard expired matching events instead of replaying them.
+                    if ("reachabilityChanged".equals(eventName)) {
+                        preferences.edit().remove(CapgoWatchConstants.PREF_LAST_REACHABLE).commit();
+                    }
                     continue;
                 }
                 final JSONObject payloadJson = entry.getJSONObject("payload");
@@ -165,7 +168,62 @@ public class CapgoWatchEventStore {
                     return false;
                 }
             }
-            preferences.edit().putBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, isReachable).commit();
+            if (!preferences.edit().putBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, isReachable).commit()) {
+                Log.w(TAG, "Failed to commit last reachable state");
+                return false;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * True when a retained queued reachabilityChanged event already has this value.
+     */
+    public boolean hasQueuedReachability(final boolean isReachable) {
+        synchronized (STORE_LOCK) {
+            final JSONArray events = readEventsArray();
+            final long now = System.currentTimeMillis();
+            for (int i = 0; i < events.length(); i++) {
+                try {
+                    final JSONObject entry = events.getJSONObject(i);
+                    if (!"reachabilityChanged".equals(entry.optString("eventName", ""))) {
+                        continue;
+                    }
+                    final long timestamp = entry.optLong("timestamp", now);
+                    if (now - timestamp > CapgoWatchConstants.MAX_EVENT_RETENTION_MS) {
+                        continue;
+                    }
+                    final JSONObject payload = entry.optJSONObject("payload");
+                    if (payload != null && payload.optBoolean("isReachable", false) == isReachable) {
+                        return true;
+                    }
+                } catch (JSONException e) {
+                    Log.w(TAG, "Skipping unreadable reachability event at index " + i, e);
+                }
+            }
+            return false;
+        }
+    }
+
+    public void clearLastReachable() {
+        synchronized (STORE_LOCK) {
+            if (!preferences.edit().remove(CapgoWatchConstants.PREF_LAST_REACHABLE).commit()) {
+                Log.w(TAG, "Failed to clear last reachable state");
+            }
+        }
+    }
+
+    /**
+     * Persist reachability unconditionally.
+     *
+     * @return true when the value was saved
+     */
+    public boolean forceSaveLastReachable(final boolean isReachable) {
+        synchronized (STORE_LOCK) {
+            if (!preferences.edit().putBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, isReachable).commit()) {
+                Log.w(TAG, "Failed to commit last reachable state");
+                return false;
+            }
             return true;
         }
     }
@@ -188,6 +246,7 @@ public class CapgoWatchEventStore {
     private JSONArray enforceEventQueueLimits(final JSONArray events) {
         final long now = System.currentTimeMillis();
         final JSONArray retained = new JSONArray();
+        boolean droppedReachability = false;
 
         for (int i = 0; i < events.length(); i++) {
             try {
@@ -195,6 +254,8 @@ public class CapgoWatchEventStore {
                 final long timestamp = entry.optLong("timestamp", now);
                 if (now - timestamp <= CapgoWatchConstants.MAX_EVENT_RETENTION_MS) {
                     retained.put(entry);
+                } else if ("reachabilityChanged".equals(entry.optString("eventName", ""))) {
+                    droppedReachability = true;
                 }
             } catch (JSONException e) {
                 Log.w(TAG, "Dropping unreadable stored event at index " + i, e);
@@ -202,6 +263,9 @@ public class CapgoWatchEventStore {
         }
 
         while (retained.length() > CapgoWatchConstants.MAX_STORED_EVENTS) {
+            if (isReachabilityEvent(retained.optJSONObject(0))) {
+                droppedReachability = true;
+            }
             retained.remove(0);
         }
 
@@ -209,10 +273,22 @@ public class CapgoWatchEventStore {
             retained.length() > 0 &&
             retained.toString().getBytes(StandardCharsets.UTF_8).length > CapgoWatchConstants.MAX_STORED_EVENTS_BYTES
         ) {
+            if (isReachabilityEvent(retained.optJSONObject(0))) {
+                droppedReachability = true;
+            }
             retained.remove(0);
         }
 
+        if (droppedReachability) {
+            // Persisted lastReachable must not suppress re-emit after the queued event is gone.
+            preferences.edit().remove(CapgoWatchConstants.PREF_LAST_REACHABLE).commit();
+        }
+
         return retained;
+    }
+
+    private static boolean isReachabilityEvent(final JSONObject entry) {
+        return entry != null && "reachabilityChanged".equals(entry.optString("eventName", ""));
     }
 
     private JSONArray readEventsArray() {

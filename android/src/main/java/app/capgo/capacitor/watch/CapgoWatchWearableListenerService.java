@@ -144,10 +144,22 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 resolvingLocalNode.set(false);
                 localNodeRetryAttempts++;
                 Log.w(TAG, "Failed to resolve local node id; deferring data events (attempt " + localNodeRetryAttempts + ")", e);
-                if (localNodeRetryAttempts <= LOCAL_NODE_MAX_RETRIES) {
+                final boolean hasPending;
+                synchronized (pendingDataLock) {
+                    hasPending = pendingDataEvents != null && !pendingDataEvents.isEmpty();
+                }
+                if (hasPending) {
+                    if (localNodeRetryAttempts > LOCAL_NODE_MAX_RETRIES) {
+                        Log.e(
+                            TAG,
+                            "Local node still unresolved after " +
+                                localNodeRetryAttempts +
+                                " attempts; retrying while pending data events remain"
+                        );
+                    }
                     mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
                 } else {
-                    Log.e(TAG, "Giving up resolving local node id; pending data events remain deferred");
+                    Log.e(TAG, "Giving up resolving local node id; no pending data events");
                 }
             });
     }

@@ -89,10 +89,19 @@ class CapgoWatchListenerService : WearableListenerService() {
                     "Failed to resolve local node id; deferring data events (attempt $localNodeRetryAttempts)",
                     e,
                 )
-                if (localNodeRetryAttempts <= LOCAL_NODE_MAX_RETRIES) {
+                val hasPending = synchronized(pendingDataLock) {
+                    !pendingDataEvents.isNullOrEmpty()
+                }
+                if (hasPending) {
+                    if (localNodeRetryAttempts > LOCAL_NODE_MAX_RETRIES) {
+                        Log.e(
+                            TAG,
+                            "Local node still unresolved after $localNodeRetryAttempts attempts; retrying while pending data events remain",
+                        )
+                    }
                     mainHandler.postDelayed({ resolveLocalNodeAndProcessPending() }, LOCAL_NODE_RETRY_MS)
                 } else {
-                    Log.e(TAG, "Giving up resolving local node id; pending data events remain deferred")
+                    Log.e(TAG, "Giving up resolving local node id; no pending data events")
                 }
             }
     }
@@ -130,12 +139,16 @@ class CapgoWatchListenerService : WearableListenerService() {
                         dispatch { it.onApplicationContextReceived(context) }
                     }
                     isUserInfo -> {
+                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                        val payload = dataMap.getString("payload", "{}")
                         try {
-                            val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                            val payload = dataMap.getString("payload", "{}")
                             val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
                             dispatch { it.onUserInfoReceived(userInfo) }
-                        } finally {
+                            // Delete only after successful dispatch so transient listener
+                            // failures can retry via Wear OS redelivery.
+                            Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        } catch (e: JSONException) {
+                            Log.e(TAG, "Failed to parse user info; discarding unreadable DataItem on path $path", e)
                             Wearable.getDataClient(this).deleteDataItems(itemUri)
                         }
                     }
