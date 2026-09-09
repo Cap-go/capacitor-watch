@@ -1,8 +1,10 @@
 package app.capgo.capacitor.watch;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import androidx.test.core.app.ApplicationProvider;
@@ -65,5 +67,39 @@ public class CapgoWatchPendingReplyManagerTest {
 
         Thread.sleep(350L);
         assertNull(manager.getIncoming("callback-1"));
+    }
+
+    @Test
+    public void registerIncomingExpiresCapacityEvictedCallbacks() throws Exception {
+        final Context context = ApplicationProvider.getApplicationContext();
+        final org.json.JSONObject seeded = new org.json.JSONObject();
+        // Keep createdAt well within the manager TTL so restore does not immediately expire.
+        final long base = System.currentTimeMillis() - 1_000L;
+        for (int i = 0; i < CapgoWatchConstants.MAX_PENDING_REPLIES; i++) {
+            final org.json.JSONObject entry = new org.json.JSONObject();
+            entry.put("nodeId", "node-" + i);
+            entry.put("createdAt", base + i);
+            seeded.put("callback-" + i, entry);
+        }
+        context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .edit()
+            .putString("pending_replies", seeded.toString())
+            .commit();
+
+        eventStore = new CapgoWatchEventStore(context);
+        manager = new CapgoWatchPendingReplyManager(300_000L);
+        manager.initialize(null, eventStore);
+
+        // Restore fills memory from the seeded store.
+        assertNotNull(manager.getIncoming("callback-0"));
+
+        manager.registerIncoming("callback-new", "node-new");
+
+        // Oldest durable entry was capacity-evicted and explicitly expired from memory.
+        assertNull(manager.getIncoming("callback-0"));
+        assertNotNull(manager.getIncoming("callback-new"));
+        assertFalse(eventStore.loadPendingReplies().containsKey("callback-0"));
+        assertTrue(eventStore.loadPendingReplies().containsKey("callback-new"));
     }
 }
