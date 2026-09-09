@@ -81,7 +81,10 @@ public final class CapgoWatchEventBridge {
                     pluginNow.dispatchWatchEvent("reachabilityChanged", evt, true);
                 } else {
                     // Queue so a later listener still receives the transition.
-                    eventStore.append("reachabilityChanged", evt, null);
+                    // Roll back PREF on commit failure so a later callback can retry.
+                    if (!eventStore.append("reachabilityChanged", evt, null)) {
+                        eventStore.clearLastReachable();
+                    }
                 }
                 return;
             }

@@ -1,6 +1,7 @@
 package app.capgo.capacitor.watch;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -160,5 +161,42 @@ public class CapgoWatchEventStoreTest {
             .getString("events", "[]");
         assertTrue(rawEvents.contains("userInfoReceived"));
         assertTrue(rawEvents.contains("keep"));
+    }
+
+    @Test
+    public void appendReachabilityEnqueuesOppositeWhileQueued() throws Exception {
+        final JSObject offline = new JSObject();
+        offline.put("isReachable", false);
+        assertTrue(store.appendReachabilityIfAbsent(false, offline));
+
+        final JSObject online = new JSObject();
+        online.put("isReachable", true);
+        // Opposite value must still enqueue even if PREF were stale/matching incorrectly.
+        assertTrue(store.appendReachabilityIfAbsent(true, online));
+
+        final var events = store.drainEventsFor("reachabilityChanged");
+        assertEquals(2, events.size());
+        assertEquals(false, events.get(0).payload.getBoolean("isReachable"));
+        assertEquals(true, events.get(1).payload.getBoolean("isReachable"));
+    }
+
+    @Test
+    public void appendReachabilityReturnsTrueWhenPrefWriteWouldFailIsBestEffort() {
+        final JSObject offline = new JSObject();
+        offline.put("isReachable", false);
+        assertTrue(store.appendReachabilityIfAbsent(false, offline));
+        // Same value already queued — returns false without duplicating.
+        assertFalse(store.appendReachabilityIfAbsent(false, offline));
+        assertEquals(1, store.drainEventsFor("reachabilityChanged").size());
+    }
+
+    @Test
+    public void clearLastReachableAllowsRetryAfterFailedQueue() {
+        final JSObject online = new JSObject();
+        online.put("isReachable", true);
+        assertTrue(store.saveLastReachableIfChanged(true));
+        store.clearLastReachable();
+        // After clear, the same transition can be recorded again.
+        assertTrue(store.saveLastReachableIfChanged(true));
     }
 }

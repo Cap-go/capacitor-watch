@@ -31,16 +31,31 @@ public class CapgoWatchEventStore {
         preferences = context.getApplicationContext().getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE);
     }
 
-    public void append(final String eventName, final JSObject payload) {
-        append(eventName, payload, null);
+    public boolean append(final String eventName, final JSObject payload) {
+        return append(eventName, payload, null);
     }
 
-    public void append(final String eventName, final JSObject payload, final String replyNodeId) {
+    /**
+     * Persist an event for later replay.
+     *
+     * @return true when the events preference commit succeeded
+     */
+    public boolean append(final String eventName, final JSObject payload, final String replyNodeId) {
         synchronized (STORE_LOCK) {
             try {
-                appendUnlocked(eventName, payload, replyNodeId);
+                return appendUnlocked(eventName, payload, replyNodeId);
             } catch (JSONException e) {
                 Log.e(TAG, "Failed to persist event " + eventName, e);
+                return false;
+            }
+        }
+    }
+
+    /** Clear PREF_LAST_REACHABLE so a later reachability callback can retry persistence. */
+    public void clearLastReachable() {
+        synchronized (STORE_LOCK) {
+            if (!preferences.edit().remove(CapgoWatchConstants.PREF_LAST_REACHABLE).commit()) {
+                Log.w(TAG, "Failed to clear last reachable state");
             }
         }
     }
@@ -62,10 +77,12 @@ public class CapgoWatchEventStore {
                 }
                 return false;
             }
-            // Skip only when PREF already matches and nothing is queued for this value.
+            // Skip when PREF already matches only if no opposite value remains queued.
+            // Opposite-queued + stale PREF must still accept the newer transition.
             if (
                 preferences.contains(CapgoWatchConstants.PREF_LAST_REACHABLE) &&
-                preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false) == isReachable
+                preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false) == isReachable &&
+                !hasQueuedReachabilityUnlocked(!isReachable)
             ) {
                 return false;
             }
@@ -77,8 +94,9 @@ public class CapgoWatchEventStore {
                 Log.e(TAG, "Failed to persist reachabilityChanged event", e);
                 return false;
             }
-            // Persist PREF only after the events commit succeeds so a failed append stays retryable.
-            return forceSaveLastReachableUnlocked(isReachable);
+            // Event commit succeeded — PREF write is best-effort so callers still drain.
+            forceSaveLastReachableUnlocked(isReachable);
+            return true;
         }
     }
 
