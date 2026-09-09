@@ -1,3 +1,5 @@
+/// <reference types="@capacitor/cli" />
+
 import type { PluginListenerHandle } from '@capacitor/core';
 
 /**
@@ -88,6 +90,17 @@ export interface CapgoWatchPluginConfig {
    * @default 'capgo_watch'
    */
   capability?: string;
+}
+
+declare module '@capacitor/cli' {
+  export interface PluginsConfig {
+    /**
+     * Configuration for the CapgoWatch plugin.
+     *
+     * @since 8.2.0
+     */
+    CapgoWatch?: CapgoWatchPluginConfig;
+  }
 }
 
 /** Default Wear OS capability when not configured. */

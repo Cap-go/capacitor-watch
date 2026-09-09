@@ -186,7 +186,11 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let context = WCSession.default.receivedApplicationContext
-        call.resolve(["context": CapgoWatchMessageConverter.convertFromWatchMessage(context)])
+        if context.isEmpty {
+            call.resolve(["context": NSNull()])
+        } else {
+            call.resolve(["context": CapgoWatchMessageConverter.convertFromWatchMessage(context)])
+        }
     }
 
     @objc func getPluginVersion(_ call: CAPPluginCall) {
@@ -321,7 +325,9 @@ enum CapgoWatchMessageConverter {
     static func convertToWatchMessage(_ jsObject: JSObject) -> [String: Any] {
         var result: [String: Any] = [:]
         for (key, value) in jsObject {
-            result[key] = convertJSValue(value)
+            if let converted = convertJSValue(value) {
+                result[key] = converted
+            }
         }
         return result
     }
@@ -334,11 +340,15 @@ enum CapgoWatchMessageConverter {
         return result
     }
 
-    private static func convertJSValue(_ value: Any) -> Any {
+    /// Strip NSNull so nested payloads remain valid property-list values for WCSession.
+    private static func convertJSValue(_ value: Any) -> Any? {
+        if value is NSNull {
+            return nil
+        }
         if let dict = value as? JSObject {
             return convertToWatchMessage(dict)
         } else if let array = value as? JSArray {
-            return array.map { convertJSValue($0) }
+            return array.compactMap { convertJSValue($0) }
         } else {
             return value
         }

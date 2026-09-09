@@ -9,7 +9,7 @@ Kotlin SDK for Wear OS companion apps that communicate with `@capgo/capacitor-wa
 
 ```gradle
 include ':capgo-watch-sdk'
-project(':capgo-watch-sdk').projectDir = new File('../path/to/capacitor-watch/watch-sdk/wearos')
+project(':capgo-watch-sdk').projectDir = file('../path/to/capacitor-watch/watch-sdk/wearos')
 ```
 
 Your Wear project root `build.gradle` must apply the Kotlin Android plugin (for example `id 'org.jetbrains.kotlin.android' version '2.1.10' apply false` in the plugins block).

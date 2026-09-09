@@ -92,18 +92,30 @@ class CapgoWatchListenerService : WearableListenerService() {
                 val hasPending = synchronized(pendingDataLock) {
                     !pendingDataEvents.isNullOrEmpty()
                 }
-                if (hasPending) {
-                    if (localNodeRetryAttempts > LOCAL_NODE_MAX_RETRIES) {
-                        Log.e(
-                            TAG,
-                            "Local node still unresolved after $localNodeRetryAttempts attempts; retrying while pending data events remain",
-                        )
-                    }
-                    mainHandler.postDelayed({ resolveLocalNodeAndProcessPending() }, LOCAL_NODE_RETRY_MS)
-                } else {
+                if (!hasPending) {
                     Log.e(TAG, "Giving up resolving local node id; no pending data events")
+                    localNodeRetryAttempts = 0
+                    return@addOnFailureListener
                 }
+                if (localNodeRetryAttempts >= LOCAL_NODE_MAX_RETRIES) {
+                    Log.e(
+                        TAG,
+                        "Local node still unresolved after $localNodeRetryAttempts attempts; abandoning pending data events",
+                    )
+                    synchronized(pendingDataLock) {
+                        pendingDataEvents = null
+                    }
+                    localNodeRetryAttempts = 0
+                    return@addOnFailureListener
+                }
+                val delayMs = LOCAL_NODE_RETRY_MS * (1L shl (localNodeRetryAttempts - 1).coerceAtMost(4))
+                mainHandler.postDelayed({ resolveLocalNodeAndProcessPending() }, delayMs)
             }
+    }
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     private fun processDataEvents(dataEvents: List<DataEvent>, cachedLocalNodeId: String) {

@@ -64,6 +64,9 @@ public final class CapgoWatchEventBridge {
     }
 
     public static void dispatchReachability(final boolean isReachable) {
+        final JSObject evt = new JSObject();
+        evt.put("isReachable", isReachable);
+
         if (eventStore != null) {
             final CapgoWatchPlugin plugin = pluginRef.get();
             final boolean live = plugin != null && plugin.hasWatchListeners("reachabilityChanged");
@@ -72,21 +75,28 @@ public final class CapgoWatchEventBridge {
                 if (!eventStore.saveLastReachableIfChanged(isReachable)) {
                     return;
                 }
-            } else {
-                // Background queue: dedupe only while an equivalent event remains retained.
-                // Do not rely on preference alone — expired/evicted events clear it, but
-                // even if clear is delayed, hasQueuedReachability skips expired entries.
-                if (eventStore.hasQueuedReachability(isReachable)) {
-                    return;
-                }
-                if (!eventStore.forceSaveLastReachable(isReachable)) {
-                    return;
+                plugin.dispatchWatchEvent("reachabilityChanged", evt, true);
+                return;
+            }
+
+            // Background queue: check + append must be atomic so overlapping callbacks
+            // cannot both pass hasQueuedReachability before either persists.
+            if (!eventStore.appendReachabilityIfAbsent(isReachable, evt)) {
+                return;
+            }
+
+            final CapgoWatchPlugin pluginAfterAppend = pluginRef.get();
+            if (pluginAfterAppend != null && pluginAfterAppend.hasWatchListeners("reachabilityChanged")) {
+                for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainEventsFor("reachabilityChanged")) {
+                    pluginAfterAppend.dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, true);
                 }
             }
+            return;
         }
 
-        final JSObject evt = new JSObject();
-        evt.put("isReachable", isReachable);
-        dispatch("reachabilityChanged", evt, true);
+        final CapgoWatchPlugin plugin = pluginRef.get();
+        if (plugin != null && plugin.hasWatchListeners("reachabilityChanged")) {
+            plugin.dispatchWatchEvent("reachabilityChanged", evt, true);
+        }
     }
 }

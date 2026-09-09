@@ -97,6 +97,10 @@ class CapgoWatch private constructor(private val appContext: Context) {
         if (capabilityNodes.isNotEmpty()) {
             return capabilityNodes.toList()
         }
+        // Custom capabilities must not fall back to every connected node.
+        if (capability != CapgoWatchPaths.DEFAULT_CAPABILITY) {
+            return emptyList()
+        }
         return nodeClient.connectedNodes.await()
     }
 
