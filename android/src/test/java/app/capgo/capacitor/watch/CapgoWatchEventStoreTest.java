@@ -146,8 +146,7 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void savePendingReplyReturnsCapacityEvictions() throws Exception {
-        // Seed oldest entries with distinct createdAt so eviction order is deterministic.
+    public void savePendingReplyRejectsWhenAtCapacity() throws Exception {
         final Context context = ApplicationProvider.getApplicationContext();
         final org.json.JSONObject seeded = new org.json.JSONObject();
         final long base = System.currentTimeMillis() - 60_000L;
@@ -164,14 +163,15 @@ public class CapgoWatchEventStoreTest {
             .commit();
 
         final CapgoWatchEventStore capped = new CapgoWatchEventStore(context);
-        final var evicted = capped.savePendingReply("callback-new", "node-new");
-        assertEquals(1, evicted.size());
-        assertEquals("callback-0", evicted.get(0));
+        assertFalse(capped.savePendingReply("callback-new", "node-new"));
 
         final var pending = capped.loadPendingReplies();
         assertEquals(CapgoWatchConstants.MAX_PENDING_REPLIES, pending.size());
-        assertTrue(pending.containsKey("callback-new"));
-        assertFalse(pending.containsKey("callback-0"));
+        assertFalse(pending.containsKey("callback-new"));
+        assertTrue(pending.containsKey("callback-0"));
+        // Updating an existing id remains allowed at capacity.
+        assertTrue(capped.savePendingReply("callback-0", "node-0-updated"));
+        assertEquals("node-0-updated", capped.loadPendingReplies().get("callback-0").nodeId);
     }
 
     @Test
