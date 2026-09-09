@@ -1,6 +1,8 @@
 plugins {
-    id 'com.android.library' version '8.13.0'
-    id 'org.jetbrains.kotlin.android' version '2.1.10'
+    // Versions come from the consumer root (pluginManagement / buildscript).
+    // Pinning AGP here conflicts when the Wear app uses a different AGP.
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {

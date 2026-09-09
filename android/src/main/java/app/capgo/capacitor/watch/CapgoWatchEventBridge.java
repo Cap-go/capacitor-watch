@@ -75,7 +75,14 @@ public final class CapgoWatchEventBridge {
                 if (!eventStore.saveLastReachableIfChanged(isReachable)) {
                     return;
                 }
-                plugin.dispatchWatchEvent("reachabilityChanged", evt, true);
+                // Recheck after PREF write — plugin may have been destroyed in between.
+                final CapgoWatchPlugin pluginNow = pluginRef.get();
+                if (pluginNow != null && pluginNow.hasWatchListeners("reachabilityChanged")) {
+                    pluginNow.dispatchWatchEvent("reachabilityChanged", evt, true);
+                } else {
+                    // Queue so a later listener still receives the transition.
+                    eventStore.append("reachabilityChanged", evt, null);
+                }
                 return;
             }
 

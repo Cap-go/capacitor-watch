@@ -53,22 +53,36 @@ public class CapgoWatchEventStore {
     public boolean appendReachabilityIfAbsent(final boolean isReachable, final JSObject payload) {
         synchronized (STORE_LOCK) {
             if (hasQueuedReachabilityUnlocked(isReachable)) {
+                // Align PREF with the already-queued value if a prior PREF write failed.
+                if (
+                    !preferences.contains(CapgoWatchConstants.PREF_LAST_REACHABLE) ||
+                    preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false) != isReachable
+                ) {
+                    forceSaveLastReachableUnlocked(isReachable);
+                }
                 return false;
             }
-            if (!forceSaveLastReachableUnlocked(isReachable)) {
+            // Skip only when PREF already matches and nothing is queued for this value.
+            if (
+                preferences.contains(CapgoWatchConstants.PREF_LAST_REACHABLE) &&
+                preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false) == isReachable
+            ) {
                 return false;
             }
             try {
-                appendUnlocked("reachabilityChanged", payload, null);
-                return true;
+                if (!appendUnlocked("reachabilityChanged", payload, null)) {
+                    return false;
+                }
             } catch (JSONException e) {
                 Log.e(TAG, "Failed to persist reachabilityChanged event", e);
                 return false;
             }
+            // Persist PREF only after the events commit succeeds so a failed append stays retryable.
+            return forceSaveLastReachableUnlocked(isReachable);
         }
     }
 
-    private void appendUnlocked(final String eventName, final JSObject payload, final String replyNodeId) throws JSONException {
+    private boolean appendUnlocked(final String eventName, final JSObject payload, final String replyNodeId) throws JSONException {
         final JSONArray events = readEventsArray();
         final JSONObject entry = new JSONObject();
         entry.put("eventName", eventName);
@@ -82,9 +96,10 @@ public class CapgoWatchEventStore {
         if (!preferences.edit().putString(KEY_EVENTS, limited.retained.toString()).commit()) {
             Log.w(TAG, "Failed to commit persisted event " + eventName);
             // Preserve PREF_LAST_REACHABLE when the events commit fails.
-            return;
+            return false;
         }
         applyReachabilityPrefAfterDrop(limited.retained, limited.droppedReachability);
+        return true;
     }
 
     public List<StoredEvent> drainAll() {

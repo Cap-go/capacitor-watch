@@ -1,11 +1,14 @@
 package app.capgo.capacitor.watch.sdk
 
+import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.google.android.gms.common.data.FreezableUtils
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataItem
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
@@ -13,6 +16,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CompletableDeferred
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -22,12 +26,14 @@ class CapgoWatchListenerService : WearableListenerService() {
     private var localNodeId: String? = null
     private val pendingDataLock = Any()
     private var pendingDataEvents: MutableList<DataEvent>? = null
+    private var pendingPersistedUris: MutableList<Uri>? = null
     private val resolvingLocalNode = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
 
     override fun onCreate() {
         super.onCreate()
+        reloadPersistedPendingDataUris()
         Wearable.getNodeClient(this)
             .localNode
             .addOnSuccessListener { onLocalNodeResolved(it.id) }
@@ -57,13 +63,19 @@ class CapgoWatchListenerService : WearableListenerService() {
         localNodeId = nodeId
         localNodeRetryAttempts = 0
         resolvingLocalNode.set(false)
-        val pending = synchronized(pendingDataLock) {
-            val events = pendingDataEvents
+        val pending: List<DataEvent>?
+        val persisted: List<Uri>?
+        synchronized(pendingDataLock) {
+            pending = pendingDataEvents
             pendingDataEvents = null
-            events
+            persisted = pendingPersistedUris
+            pendingPersistedUris = null
         }
         if (!pending.isNullOrEmpty()) {
             processDataEvents(pending, nodeId)
+        }
+        if (!persisted.isNullOrEmpty()) {
+            fetchAndProcessPersistedUris(persisted, nodeId)
         }
     }
 
@@ -71,6 +83,12 @@ class CapgoWatchListenerService : WearableListenerService() {
         synchronized(pendingDataLock) {
             val pending = pendingDataEvents ?: mutableListOf<DataEvent>().also { pendingDataEvents = it }
             pending.addAll(events)
+        }
+    }
+
+    private fun hasPendingData(): Boolean {
+        synchronized(pendingDataLock) {
+            return !pendingDataEvents.isNullOrEmpty() || !pendingPersistedUris.isNullOrEmpty()
         }
     }
 
@@ -89,10 +107,7 @@ class CapgoWatchListenerService : WearableListenerService() {
                     "Failed to resolve local node id; deferring data events (attempt $localNodeRetryAttempts)",
                     e,
                 )
-                val hasPending = synchronized(pendingDataLock) {
-                    !pendingDataEvents.isNullOrEmpty()
-                }
-                if (!hasPending) {
+                if (!hasPendingData()) {
                     Log.e(TAG, "Giving up resolving local node id; no pending data events")
                     localNodeRetryAttempts = 0
                     return@addOnFailureListener
@@ -100,13 +115,8 @@ class CapgoWatchListenerService : WearableListenerService() {
                 if (localNodeRetryAttempts >= LOCAL_NODE_MAX_RETRIES) {
                     Log.e(
                         TAG,
-                        "Local node still unresolved after $localNodeRetryAttempts attempts; abandoning pending data events",
+                        "Local node still unresolved after $localNodeRetryAttempts attempts; retrying while pending data events remain",
                     )
-                    synchronized(pendingDataLock) {
-                        pendingDataEvents = null
-                    }
-                    localNodeRetryAttempts = 0
-                    return@addOnFailureListener
                 }
                 val delayMs = LOCAL_NODE_RETRY_MS * (1L shl (localNodeRetryAttempts - 1).coerceAtMost(4))
                 mainHandler.postDelayed({ resolveLocalNodeAndProcessPending() }, delayMs)
@@ -114,8 +124,67 @@ class CapgoWatchListenerService : WearableListenerService() {
     }
 
     override fun onDestroy() {
+        persistPendingDataUris()
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
+    }
+
+    private fun persistPendingDataUris() {
+        val uris = JSONArray()
+        synchronized(pendingDataLock) {
+            pendingDataEvents?.forEach { event ->
+                event.dataItem.uri?.let { uris.put(it.toString()) }
+            }
+            pendingDataEvents = null
+            pendingPersistedUris?.forEach { uri ->
+                uris.put(uri.toString())
+            }
+            pendingPersistedUris = null
+        }
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (uris.length() == 0) {
+            prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
+            return
+        }
+        if (!prefs.edit().putString(PREF_PENDING_DATA_URIS, uris.toString()).commit()) {
+            Log.w(TAG, "Failed to persist pending data URIs")
+        }
+    }
+
+    private fun reloadPersistedPendingDataUris() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(PREF_PENDING_DATA_URIS, null) ?: return
+        prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
+        try {
+            val uris = JSONArray(raw)
+            val loaded = mutableListOf<Uri>()
+            for (i in 0 until uris.length()) {
+                val uriString = uris.optString(i, null) ?: continue
+                if (uriString.isEmpty()) continue
+                loaded.add(Uri.parse(uriString))
+            }
+            if (loaded.isEmpty()) return
+            synchronized(pendingDataLock) {
+                val pending = pendingPersistedUris ?: mutableListOf<Uri>().also { pendingPersistedUris = it }
+                pending.addAll(loaded)
+            }
+            resolveLocalNodeAndProcessPending()
+        } catch (e: JSONException) {
+            Log.w(TAG, "Resetting corrupted pending data URI store", e)
+        }
+    }
+
+    private fun fetchAndProcessPersistedUris(uris: List<Uri>, cachedLocalNodeId: String) {
+        for (uri in uris) {
+            Wearable.getDataClient(this)
+                .getDataItem(uri)
+                .addOnSuccessListener { item ->
+                    if (item != null) {
+                        processDataItem(item, cachedLocalNodeId)
+                    }
+                }
+                .addOnFailureListener { e -> Log.w(TAG, "Failed to reload pending DataItem $uri", e) }
+        }
     }
 
     private fun processDataEvents(dataEvents: List<DataEvent>, cachedLocalNodeId: String) {
@@ -123,53 +192,53 @@ class CapgoWatchListenerService : WearableListenerService() {
             if (event.type != DataEvent.TYPE_CHANGED) {
                 continue
             }
+            processDataItem(event.dataItem, cachedLocalNodeId)
+        }
+    }
 
-            val itemUri = event.dataItem.uri
-            val path = itemUri.path
-            if (path == null) {
-                continue
-            }
+    private fun processDataItem(item: DataItem, cachedLocalNodeId: String) {
+        val itemUri = item.uri
+        val path = itemUri.path ?: return
 
-            val isContext = path == CapgoWatchPaths.PATH_CONTEXT
-            val isUserInfo = path.startsWith(CapgoWatchPaths.PATH_USER_INFO)
-            if (!isContext && !isUserInfo) {
-                continue
-            }
+        val isContext = path == CapgoWatchPaths.PATH_CONTEXT
+        val isUserInfo = path.startsWith(CapgoWatchPaths.PATH_USER_INFO)
+        if (!isContext && !isUserInfo) {
+            return
+        }
 
-            // Skip the watch's own outgoing DataItems (URI host == local node id).
-            val host = itemUri.host
-            if (host != null && host == cachedLocalNodeId) {
-                continue
-            }
+        // Skip the watch's own outgoing DataItems (URI host == local node id).
+        val host = itemUri.host
+        if (host != null && host == cachedLocalNodeId) {
+            return
+        }
 
-            try {
-                when {
-                    isContext -> {
-                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                        val payload = dataMap.getString("payload", "{}")
-                        val context = CapgoWatchJson.objectToMap(JSONObject(payload))
-                        dispatch { it.onApplicationContextReceived(context) }
-                    }
-                    isUserInfo -> {
-                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                        val payload = dataMap.getString("payload", "{}")
-                        try {
-                            val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
-                            dispatch { it.onUserInfoReceived(userInfo) }
-                            // Delete only after successful dispatch so transient listener
-                            // failures can retry via Wear OS redelivery.
-                            Wearable.getDataClient(this).deleteDataItems(itemUri)
-                        } catch (e: JSONException) {
-                            Log.e(TAG, "Failed to parse user info; discarding unreadable DataItem on path $path", e)
-                            Wearable.getDataClient(this).deleteDataItems(itemUri)
-                        }
+        try {
+            when {
+                isContext -> {
+                    val dataMap = DataMapItem.fromDataItem(item).dataMap
+                    val payload = dataMap.getString("payload", "{}")
+                    val context = CapgoWatchJson.objectToMap(JSONObject(payload))
+                    dispatch { it.onApplicationContextReceived(context) }
+                }
+                isUserInfo -> {
+                    val dataMap = DataMapItem.fromDataItem(item).dataMap
+                    val payload = dataMap.getString("payload", "{}")
+                    try {
+                        val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
+                        dispatch { it.onUserInfoReceived(userInfo) }
+                        // Delete only after successful dispatch so transient listener
+                        // failures can retry via Wear OS redelivery.
+                        Wearable.getDataClient(this).deleteDataItems(itemUri)
+                    } catch (e: JSONException) {
+                        Log.e(TAG, "Failed to parse user info; discarding unreadable DataItem on path $path", e)
+                        Wearable.getDataClient(this).deleteDataItems(itemUri)
                     }
                 }
-            } catch (e: JSONException) {
-                Log.e(TAG, "Failed to parse data change on path $path", e)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to handle data change on path $path", e)
             }
+        } catch (e: JSONException) {
+            Log.e(TAG, "Failed to parse data change on path $path", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to handle data change on path $path", e)
         }
     }
 
@@ -226,6 +295,8 @@ class CapgoWatchListenerService : WearableListenerService() {
         private const val TAG = "CapgoWatchListener"
         private const val LOCAL_NODE_RETRY_MS = 1_000L
         private const val LOCAL_NODE_MAX_RETRIES = 5
+        private const val PREFS_NAME = "capgo_watch_sdk"
+        private const val PREF_PENDING_DATA_URIS = "pending_data_uris"
         private val pendingReplies = ConcurrentHashMap<String, CompletableDeferred<ByteArray>>()
 
         @Volatile

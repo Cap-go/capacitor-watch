@@ -19,6 +19,7 @@ import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -161,12 +162,13 @@ public class CapgoWatchPlugin extends Plugin {
     private void replayStoredEventsFor(final String eventName) {
         final List<CapgoWatchEventStore.StoredEvent> storedEvents =
             eventName == null ? eventStore.drainAll() : eventStore.drainEventsFor(eventName);
+        final Map<String, CapgoWatchEventStore.PendingReplyRecord> pendingReplies = eventStore.loadPendingReplies();
 
         for (final CapgoWatchEventStore.StoredEvent storedEvent : storedEvents) {
             if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
                 final String callbackId = storedEvent.payload.getString("callbackId", null);
                 if (callbackId != null && pendingReplyManager != null) {
-                    final CapgoWatchEventStore.PendingReplyRecord record = eventStore.loadPendingReplies().get(callbackId);
+                    final CapgoWatchEventStore.PendingReplyRecord record = pendingReplies.get(callbackId);
                     final long createdAt = record != null ? record.createdAt : storedEvent.timestamp;
                     if (System.currentTimeMillis() - createdAt > PENDING_REPLY_TTL_MS) {
                         continue;
