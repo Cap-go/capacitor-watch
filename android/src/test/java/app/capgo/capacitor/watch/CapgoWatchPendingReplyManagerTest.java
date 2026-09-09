@@ -39,7 +39,7 @@ public class CapgoWatchPendingReplyManagerTest {
     public void claimIncomingRemovesPendingReply() {
         manager = new CapgoWatchPendingReplyManager(60_000L);
         manager.initialize(null, eventStore);
-        manager.registerIncoming("callback-1", "node-1");
+        assertTrue(manager.registerIncoming("callback-1", "node-1"));
 
         final CapgoWatchPendingReplyManager.IncomingPendingReply claimed = manager.claimIncoming("callback-1");
         assertNotNull(claimed);
@@ -94,7 +94,7 @@ public class CapgoWatchPendingReplyManagerTest {
         // Restore fills memory from the seeded store.
         assertNotNull(manager.getIncoming("callback-0"));
 
-        manager.registerIncoming("callback-new", "node-new");
+        assertFalse(manager.registerIncoming("callback-new", "node-new"));
 
         // New registration was explicitly rejected; durable older callbacks preserved.
         assertNull(manager.getIncoming("callback-new"));

@@ -38,7 +38,7 @@ public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
     private static final String PLUGIN_VERSION = "8.1.3";
-    private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
+    private static final long PENDING_REPLY_TTL_MS = CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS;
 
     private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;
 
@@ -117,13 +117,15 @@ public class CapgoWatchPlugin extends Plugin {
         notifyListeners(eventName, payload, retainUntilConsumed);
     }
 
-    static void registerPendingReply(final String callbackId, final String nodeId) {
+    /**
+     * @return {@code true} when the pending-reply registration was accepted
+     */
+    static boolean registerPendingReply(final String callbackId, final String nodeId) {
         final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
         if (manager != null) {
-            manager.registerIncoming(callbackId, nodeId);
-            return;
+            return manager.registerIncoming(callbackId, nodeId);
         }
-        CapgoWatchEventBridge.savePendingReply(callbackId, nodeId);
+        return CapgoWatchEventBridge.savePendingReply(callbackId, nodeId);
     }
 
     static void handleIncomingReply(final String path, final byte[] data) {
@@ -187,16 +189,9 @@ public class CapgoWatchPlugin extends Plugin {
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
-                while (true) {
-                    final boolean previous = lastReachable.get();
-                    if (previous == isReachable) {
-                        break;
-                    }
-                    if (lastReachable.compareAndSet(previous, isReachable)) {
-                        CapgoWatchEventBridge.dispatchReachability(isReachable);
-                        break;
-                    }
-                }
+                // Forward every observation (including initial unreachable); bridge dedupes.
+                lastReachable.set(isReachable);
+                CapgoWatchEventBridge.dispatchReachability(isReachable);
             } catch (ExecutionException | InterruptedException e) {
                 Log.w(TAG, "Failed to determine reachability", e);
             }
@@ -258,10 +253,27 @@ public class CapgoWatchPlugin extends Plugin {
                     }
                 } else {
                     final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
+                    // Fan out to every connected node; reject if any send fails.
+                    Exception lastSendError = null;
+                    boolean anyFailed = false;
                     for (final Node node : nodes) {
-                        Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE, payload));
+                        try {
+                            Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE, payload));
+                        } catch (ExecutionException | InterruptedException sendError) {
+                            anyFailed = true;
+                            lastSendError = sendError;
+                            Log.w(TAG, "Failed to send message to node " + node.getId(), sendError);
+                            if (sendError instanceof InterruptedException) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
                     }
-                    call.resolve();
+                    if (anyFailed) {
+                        final String detail = lastSendError != null ? lastSendError.getMessage() : "unknown";
+                        call.reject("Failed to send message: " + detail, lastSendError);
+                    } else {
+                        call.resolve();
+                    }
                 }
             } catch (ExecutionException | InterruptedException | JSONException e) {
                 if (callbackId != null) {

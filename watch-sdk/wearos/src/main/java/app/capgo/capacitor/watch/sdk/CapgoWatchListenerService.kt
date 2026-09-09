@@ -15,6 +15,10 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import org.json.JSONArray
 import org.json.JSONException
@@ -31,6 +35,9 @@ class CapgoWatchListenerService : WearableListenerService() {
     private val resolvingLocalNode = AtomicBoolean(false)
     private val drainInProgress = AtomicBoolean(false)
     private val pendingDrainRequested = AtomicBoolean(false)
+    private val persistGeneration = AtomicLong(0)
+    private val lastCommittedGeneration = AtomicLong(0)
+    private val persistExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
 
@@ -100,16 +107,16 @@ class CapgoWatchListenerService : WearableListenerService() {
                         }
                     }
                 }
-                persistPendingUrisLocked()
             }
+            flushPendingUris(syncDurable = true)
             if (!pending.isNullOrEmpty()) {
                 processDataEvents(pending, nodeId)
                 synchronized(pendingDataLock) {
                     pending.forEach { event ->
                         event.dataItem.uri?.let { removePendingUriLocked(it) }
                     }
-                    persistPendingUrisLocked()
                 }
+                flushPendingUris(syncDurable = false)
             }
             if (persisted.isNotEmpty()) {
                 val toFetch = synchronized(pendingDataLock) {
@@ -148,9 +155,9 @@ class CapgoWatchListenerService : WearableListenerService() {
                 }
                 pending.add(event)
             }
-            // Persist URIs on enqueue so process death before onDestroy cannot lose them.
-            persistPendingUrisLocked()
         }
+        // Sync durability barrier outside the lock so process death cannot lose enqueued URIs.
+        flushPendingUris(syncDurable = true)
     }
 
     private fun addPendingUriLocked(uri: Uri): Boolean {
@@ -230,32 +237,81 @@ class CapgoWatchListenerService : WearableListenerService() {
     }
 
     override fun onDestroy() {
-        persistPendingDataUris()
+        // Fold buffered events then sync-flush before tearing down the persist executor.
+        synchronized(pendingDataLock) {
+            pendingDataEvents?.forEach { event ->
+                event.dataItem.uri?.let { addPendingUriLocked(it) }
+            }
+        }
+        flushPendingUris(syncDurable = true)
+        persistExecutor.shutdown()
+        try {
+            persistExecutor.awaitTermination(2, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
-    private fun persistPendingDataUris() {
-        synchronized(pendingDataLock) {
-            // Fold any still-buffered event URIs into the durable set before writing.
-            pendingDataEvents?.forEach { event ->
-                event.dataItem.uri?.let { addPendingUriLocked(it) }
-            }
-            persistPendingUrisLocked()
-        }
-    }
-
-    private fun persistPendingUrisLocked() {
+    /**
+     * Snapshot pending/in-flight URIs under the lock (no I/O).
+     * @return payload (null = clear) and monotonic generation for write serialization
+     */
+    private fun snapshotPendingUrisLocked(): Pair<String?, Long> {
         val uris = JSONArray()
         pendingPersistedUris?.forEach { uri -> uris.put(uri.toString()) }
         inFlightPersistedUris?.forEach { uri -> uris.put(uri.toString()) }
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (uris.length() == 0) {
-            prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
+        val generation = persistGeneration.incrementAndGet()
+        val payload = if (uris.length() == 0) null else uris.toString()
+        return payload to generation
+    }
+
+    /**
+     * Commit a previously taken snapshot. Runs only on [persistExecutor] so writes are
+     * serialized; stale generations are skipped so older cleanup cannot clobber newer state.
+     */
+    private fun commitPendingUrisSnapshot(payload: String?, generation: Long) {
+        if (generation < lastCommittedGeneration.get()) {
             return
         }
-        if (!prefs.edit().putString(PREF_PENDING_DATA_URIS, uris.toString()).commit()) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val ok =
+            if (payload == null) {
+                prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
+            } else {
+                prefs.edit().putString(PREF_PENDING_DATA_URIS, payload).commit()
+            }
+        if (!ok) {
             Log.w(TAG, "Failed to persist pending data URIs")
+            return
+        }
+        lastCommittedGeneration.set(generation)
+    }
+
+    /**
+     * @param syncDurable when true, block until the commit finishes (enqueue / destroy barrier).
+     *                    when false, queue cleanup on [persistExecutor] without blocking the
+     *                    main-thread listener/lifecycle path.
+     */
+    private fun flushPendingUris(syncDurable: Boolean) {
+        val (payload, generation) = synchronized(pendingDataLock) { snapshotPendingUrisLocked() }
+        val task = Runnable { commitPendingUrisSnapshot(payload, generation) }
+        if (syncDurable) {
+            try {
+                persistExecutor.submit(task).get(5, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                // Executor shut down or timed out — fall back to inline commit.
+                Log.w(TAG, "Sync URI persist via executor failed; committing inline", e)
+                commitPendingUrisSnapshot(payload, generation)
+            }
+        } else {
+            try {
+                persistExecutor.execute(task)
+            } catch (e: Exception) {
+                Log.w(TAG, "Async URI persist rejected; committing inline", e)
+                commitPendingUrisSnapshot(payload, generation)
+            }
         }
     }
 
@@ -278,9 +334,9 @@ class CapgoWatchListenerService : WearableListenerService() {
                 for (uri in loaded) {
                     addPendingUriLocked(uri)
                 }
-                // Keep the durable copy until processing succeeds; rewrite normalized set.
-                persistPendingUrisLocked()
             }
+            // Keep the durable copy until processing succeeds; rewrite normalized set.
+            flushPendingUris(syncDurable = true)
             resolveLocalNodeAndProcessPending()
         } catch (e: JSONException) {
             Log.w(TAG, "Resetting corrupted pending data URI store", e)
@@ -302,8 +358,8 @@ class CapgoWatchListenerService : WearableListenerService() {
                     }
                     synchronized(pendingDataLock) {
                         removePendingUriLocked(uri)
-                        persistPendingUrisLocked()
                     }
+                    flushPendingUris(syncDurable = false)
                 }
                 .addOnFailureListener { e ->
                     Log.w(TAG, "Failed to reload pending DataItem $uri; retaining for retry", e)

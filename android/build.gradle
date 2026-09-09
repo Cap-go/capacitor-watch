@@ -39,6 +39,18 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            all {
+                // Robolectric on JDK 21 needs reflective access for sandbox/classloading.
+                jvmArgs += [
+                    '--add-opens=java.base/java.lang=ALL-UNNAMED',
+                    '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+                    '--add-opens=java.base/java.io=ALL-UNNAMED',
+                    '--add-opens=java.base/java.net=ALL-UNNAMED',
+                    '--add-opens=java.base/java.util=ALL-UNNAMED',
+                    '--add-opens=java.base/java.nio=ALL-UNNAMED',
+                    '--add-opens=java.base/sun.security.ssl=ALL-UNNAMED'
+                ]
+            }
         }
     }
     compileOptions {
