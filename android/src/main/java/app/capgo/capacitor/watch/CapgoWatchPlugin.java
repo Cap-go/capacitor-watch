@@ -312,7 +312,12 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = pendingReplyManager.claimIncoming(callbackId);
+        final CapgoWatchPendingReplyManager manager = pendingReplyManager;
+        if (manager == null) {
+            call.reject("Watch plugin destroyed");
+            return;
+        }
+        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = manager.claimIncoming(callbackId);
         if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;

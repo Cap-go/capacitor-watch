@@ -148,20 +148,27 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 synchronized (pendingDataLock) {
                     hasPending = pendingDataEvents != null && !pendingDataEvents.isEmpty();
                 }
-                if (hasPending) {
-                    if (localNodeRetryAttempts > LOCAL_NODE_MAX_RETRIES) {
-                        Log.e(
-                            TAG,
-                            "Local node still unresolved after " +
-                                localNodeRetryAttempts +
-                                " attempts; retrying while pending data events remain"
-                        );
-                    }
-                    mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
-                } else {
+                if (!hasPending) {
                     Log.e(TAG, "Giving up resolving local node id; no pending data events");
+                    localNodeRetryAttempts = 0;
+                    return;
                 }
+                if (localNodeRetryAttempts >= LOCAL_NODE_MAX_RETRIES) {
+                    Log.e(TAG, "Local node still unresolved after " + localNodeRetryAttempts + " attempts; abandoning pending data events");
+                    synchronized (pendingDataLock) {
+                        pendingDataEvents = null;
+                    }
+                    localNodeRetryAttempts = 0;
+                    return;
+                }
+                mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
             });
+    }
+
+    @Override
+    public void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void processDataEvents(final List<DataEvent> dataEvents, final String cachedLocalNodeId) {
