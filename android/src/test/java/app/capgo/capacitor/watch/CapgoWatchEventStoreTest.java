@@ -169,9 +169,12 @@ public class CapgoWatchEventStoreTest {
         offline.put("isReachable", false);
         assertTrue(store.appendReachabilityIfAbsent(false, offline));
 
+        // Force a stale PREF so the opposite-queued + PREF-mismatch branch is exercised.
+        assertTrue(store.saveLastReachableIfChanged(true));
+
         final JSObject online = new JSObject();
         online.put("isReachable", true);
-        // Opposite value must still enqueue even if PREF were stale/matching incorrectly.
+        // Opposite value must still enqueue while the previous value is queued.
         assertTrue(store.appendReachabilityIfAbsent(true, online));
 
         final var events = store.drainEventsFor("reachabilityChanged");
@@ -181,7 +184,7 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void appendReachabilityReturnsTrueWhenPrefWriteWouldFailIsBestEffort() {
+    public void appendReachabilityDedupesSameValueWhileQueued() {
         final JSObject offline = new JSObject();
         offline.put("isReachable", false);
         assertTrue(store.appendReachabilityIfAbsent(false, offline));

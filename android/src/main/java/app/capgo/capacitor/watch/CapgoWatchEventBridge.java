@@ -83,7 +83,8 @@ public final class CapgoWatchEventBridge {
                     // Queue so a later listener still receives the transition.
                     // Roll back PREF on commit failure so a later callback can retry.
                     if (!eventStore.append("reachabilityChanged", evt, null)) {
-                        eventStore.clearLastReachable();
+                        // Only roll back if PREF still reflects this failed transition.
+                        eventStore.clearLastReachableIf(isReachable);
                     }
                 }
                 return;

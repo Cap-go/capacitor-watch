@@ -42,6 +42,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private final Object pendingDataLock = new Object();
     private List<DataEvent> pendingDataEvents;
     private List<Uri> pendingPersistedUris;
+    private List<Uri> inFlightPersistedUris;
     private final AtomicBoolean resolvingLocalNode = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private int localNodeRetryAttempts = 0;
@@ -136,10 +137,22 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 persistPendingUrisLocked();
             }
         }
-        // Snapshot durable URIs after draining in-memory events so we do not double-process.
+        // Claim durable URIs so a concurrent onLocalNodeResolved cannot double-fetch.
         final List<Uri> persisted;
         synchronized (pendingDataLock) {
             persisted = pendingPersistedUris == null ? new ArrayList<>() : new ArrayList<>(pendingPersistedUris);
+            if (!persisted.isEmpty()) {
+                pendingPersistedUris = null;
+                if (inFlightPersistedUris == null) {
+                    inFlightPersistedUris = new ArrayList<>();
+                }
+                for (final Uri uri : persisted) {
+                    if (!inFlightPersistedUris.contains(uri)) {
+                        inFlightPersistedUris.add(uri);
+                    }
+                }
+                persistPendingUrisLocked();
+            }
         }
         if (!persisted.isEmpty()) {
             fetchAndProcessPersistedUris(persisted, nodeId, 0);
@@ -164,21 +177,30 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     }
 
     private void addPendingUriLocked(final Uri uri) {
+        if (
+            (pendingPersistedUris != null && pendingPersistedUris.contains(uri)) ||
+            (inFlightPersistedUris != null && inFlightPersistedUris.contains(uri))
+        ) {
+            return;
+        }
         if (pendingPersistedUris == null) {
             pendingPersistedUris = new ArrayList<>();
         }
-        if (!pendingPersistedUris.contains(uri)) {
-            pendingPersistedUris.add(uri);
-        }
+        pendingPersistedUris.add(uri);
     }
 
     private void removePendingUriLocked(final Uri uri) {
-        if (pendingPersistedUris == null) {
-            return;
+        if (pendingPersistedUris != null) {
+            pendingPersistedUris.remove(uri);
+            if (pendingPersistedUris.isEmpty()) {
+                pendingPersistedUris = null;
+            }
         }
-        pendingPersistedUris.remove(uri);
-        if (pendingPersistedUris.isEmpty()) {
-            pendingPersistedUris = null;
+        if (inFlightPersistedUris != null) {
+            inFlightPersistedUris.remove(uri);
+            if (inFlightPersistedUris.isEmpty()) {
+                inFlightPersistedUris = null;
+            }
         }
     }
 
@@ -186,7 +208,8 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         synchronized (pendingDataLock) {
             return (
                 (pendingDataEvents != null && !pendingDataEvents.isEmpty()) ||
-                (pendingPersistedUris != null && !pendingPersistedUris.isEmpty())
+                (pendingPersistedUris != null && !pendingPersistedUris.isEmpty()) ||
+                (inFlightPersistedUris != null && !inFlightPersistedUris.isEmpty())
             );
         }
     }
@@ -246,6 +269,13 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         final JSONArray uris = new JSONArray();
         if (pendingPersistedUris != null) {
             for (final Uri uri : pendingPersistedUris) {
+                if (uri != null) {
+                    uris.put(uri.toString());
+                }
+            }
+        }
+        if (inFlightPersistedUris != null) {
+            for (final Uri uri : inFlightPersistedUris) {
                 if (uri != null) {
                     uris.put(uri.toString());
                 }
