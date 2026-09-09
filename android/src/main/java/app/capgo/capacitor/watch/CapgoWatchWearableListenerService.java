@@ -1,5 +1,6 @@
 package app.capgo.capacitor.watch;
 
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -38,6 +40,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private volatile String localNodeId;
     private final Object pendingDataLock = new Object();
     private List<DataEvent> pendingDataEvents;
+    private List<Uri> pendingPersistedUris;
     private final AtomicBoolean resolvingLocalNode = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private int localNodeRetryAttempts = 0;
@@ -47,6 +50,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         super.onCreate();
         eventStore = new CapgoWatchEventStore(getApplicationContext());
         CapgoWatchEventBridge.initialize(eventStore);
+        reloadPersistedPendingDataUris();
         Wearable.getNodeClient(this)
             .getLocalNode()
             .addOnSuccessListener((node) -> onLocalNodeResolved(node.getId()))
@@ -115,12 +119,18 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         localNodeRetryAttempts = 0;
         resolvingLocalNode.set(false);
         final List<DataEvent> pending;
+        final List<Uri> persisted;
         synchronized (pendingDataLock) {
             pending = pendingDataEvents;
             pendingDataEvents = null;
+            persisted = pendingPersistedUris;
+            pendingPersistedUris = null;
         }
         if (pending != null && !pending.isEmpty()) {
             processDataEvents(pending, nodeId);
+        }
+        if (persisted != null && !persisted.isEmpty()) {
+            fetchAndProcessPersistedUris(persisted, nodeId);
         }
     }
 
@@ -130,6 +140,15 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 pendingDataEvents = new ArrayList<>();
             }
             pendingDataEvents.addAll(events);
+        }
+    }
+
+    private boolean hasPendingData() {
+        synchronized (pendingDataLock) {
+            return (
+                (pendingDataEvents != null && !pendingDataEvents.isEmpty()) ||
+                (pendingPersistedUris != null && !pendingPersistedUris.isEmpty())
+            );
         }
     }
 
@@ -144,22 +163,18 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 resolvingLocalNode.set(false);
                 localNodeRetryAttempts++;
                 Log.w(TAG, "Failed to resolve local node id; deferring data events (attempt " + localNodeRetryAttempts + ")", e);
-                final boolean hasPending;
-                synchronized (pendingDataLock) {
-                    hasPending = pendingDataEvents != null && !pendingDataEvents.isEmpty();
-                }
-                if (!hasPending) {
+                if (!hasPendingData()) {
                     Log.e(TAG, "Giving up resolving local node id; no pending data events");
                     localNodeRetryAttempts = 0;
                     return;
                 }
                 if (localNodeRetryAttempts >= LOCAL_NODE_MAX_RETRIES) {
-                    Log.e(TAG, "Local node still unresolved after " + localNodeRetryAttempts + " attempts; abandoning pending data events");
-                    synchronized (pendingDataLock) {
-                        pendingDataEvents = null;
-                    }
-                    localNodeRetryAttempts = 0;
-                    return;
+                    Log.e(
+                        TAG,
+                        "Local node still unresolved after " +
+                            localNodeRetryAttempts +
+                            " attempts; retrying while pending data events remain"
+                    );
                 }
                 mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
             });
@@ -167,8 +182,87 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
 
     @Override
     public void onDestroy() {
+        // Persist pending DataItem URIs before cancelling retries so a later service
+        // start can reload them (Wear OS does not always redeliver UUID-backed items).
+        persistPendingDataUris();
         mainHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    private void persistPendingDataUris() {
+        final JSONArray uris = new JSONArray();
+        synchronized (pendingDataLock) {
+            if (pendingDataEvents != null) {
+                for (final DataEvent event : pendingDataEvents) {
+                    final Uri uri = event.getDataItem().getUri();
+                    if (uri != null) {
+                        uris.put(uri.toString());
+                    }
+                }
+                pendingDataEvents = null;
+            }
+            if (pendingPersistedUris != null) {
+                for (final Uri uri : pendingPersistedUris) {
+                    if (uri != null) {
+                        uris.put(uri.toString());
+                    }
+                }
+                pendingPersistedUris = null;
+            }
+        }
+        final SharedPreferences prefs = getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, MODE_PRIVATE);
+        if (uris.length() == 0) {
+            prefs.edit().remove(CapgoWatchConstants.PREF_PENDING_DATA_URIS).commit();
+            return;
+        }
+        if (!prefs.edit().putString(CapgoWatchConstants.PREF_PENDING_DATA_URIS, uris.toString()).commit()) {
+            Log.w(TAG, "Failed to persist pending data URIs");
+        }
+    }
+
+    private void reloadPersistedPendingDataUris() {
+        final SharedPreferences prefs = getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, MODE_PRIVATE);
+        final String raw = prefs.getString(CapgoWatchConstants.PREF_PENDING_DATA_URIS, null);
+        if (raw == null || raw.isEmpty()) {
+            return;
+        }
+        prefs.edit().remove(CapgoWatchConstants.PREF_PENDING_DATA_URIS).commit();
+        try {
+            final JSONArray uris = new JSONArray(raw);
+            final List<Uri> loaded = new ArrayList<>();
+            for (int i = 0; i < uris.length(); i++) {
+                final String uriString = uris.optString(i, null);
+                if (uriString == null || uriString.isEmpty()) {
+                    continue;
+                }
+                loaded.add(Uri.parse(uriString));
+            }
+            if (loaded.isEmpty()) {
+                return;
+            }
+            synchronized (pendingDataLock) {
+                if (pendingPersistedUris == null) {
+                    pendingPersistedUris = new ArrayList<>();
+                }
+                pendingPersistedUris.addAll(loaded);
+            }
+            resolveLocalNodeAndProcessPending();
+        } catch (JSONException e) {
+            Log.w(TAG, "Resetting corrupted pending data URI store", e);
+        }
+    }
+
+    private void fetchAndProcessPersistedUris(final List<Uri> uris, final String cachedLocalNodeId) {
+        for (final Uri uri : uris) {
+            Wearable.getDataClient(this)
+                .getDataItem(uri)
+                .addOnSuccessListener((item) -> {
+                    if (item != null) {
+                        processDataItem(item, cachedLocalNodeId);
+                    }
+                })
+                .addOnFailureListener((e) -> Log.w(TAG, "Failed to reload pending DataItem " + uri, e));
+        }
     }
 
     private void processDataEvents(final List<DataEvent> dataEvents, final String cachedLocalNodeId) {
@@ -176,48 +270,50 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             if (event.getType() != DataEvent.TYPE_CHANGED) {
                 continue;
             }
+            processDataItem(event.getDataItem(), cachedLocalNodeId);
+        }
+    }
 
-            final DataItem item = event.getDataItem();
-            final Uri itemUri = item.getUri();
-            final String path = itemUri.getPath();
-            if (path == null) {
-                continue;
+    private void processDataItem(final DataItem item, final String cachedLocalNodeId) {
+        final Uri itemUri = item.getUri();
+        final String path = itemUri.getPath();
+        if (path == null) {
+            return;
+        }
+
+        final boolean isContext = CapgoWatchConstants.PATH_CONTEXT.equals(path);
+        final boolean isUserInfo = path.startsWith(CapgoWatchConstants.PATH_USER_INFO);
+        if (!isContext && !isUserInfo) {
+            return;
+        }
+
+        // Skip the phone's own outgoing DataItems (URI host == local node id).
+        final String host = itemUri.getHost();
+        if (host != null && host.equals(cachedLocalNodeId)) {
+            return;
+        }
+
+        try {
+            final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+            final String payload = dataMap.getString("payload", "{}");
+            final JSONObject json = new JSONObject(payload);
+            final JSObject data = new JSObject(json.toString());
+
+            if (isContext) {
+                eventStore.saveLastContext(data);
+                final JSObject evt = new JSObject();
+                evt.put("context", data);
+                CapgoWatchEventBridge.dispatch("applicationContextReceived", evt, true);
+            } else {
+                final JSObject evt = new JSObject();
+                evt.put("userInfo", data);
+                CapgoWatchEventBridge.dispatch("userInfoReceived", evt, true);
+                Wearable.getDataClient(this).deleteDataItems(itemUri);
             }
-
-            final boolean isContext = CapgoWatchConstants.PATH_CONTEXT.equals(path);
-            final boolean isUserInfo = path.startsWith(CapgoWatchConstants.PATH_USER_INFO);
-            if (!isContext && !isUserInfo) {
-                continue;
-            }
-
-            // Skip the phone's own outgoing DataItems (URI host == local node id).
-            final String host = itemUri.getHost();
-            if (host != null && host.equals(cachedLocalNodeId)) {
-                continue;
-            }
-
-            try {
-                final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                final String payload = dataMap.getString("payload", "{}");
-                final JSONObject json = new JSONObject(payload);
-                final JSObject data = new JSObject(json.toString());
-
-                if (isContext) {
-                    eventStore.saveLastContext(data);
-                    final JSObject evt = new JSObject();
-                    evt.put("context", data);
-                    CapgoWatchEventBridge.dispatch("applicationContextReceived", evt, true);
-                } else {
-                    final JSObject evt = new JSObject();
-                    evt.put("userInfo", data);
-                    CapgoWatchEventBridge.dispatch("userInfoReceived", evt, true);
-                    Wearable.getDataClient(this).deleteDataItems(itemUri);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error processing data change", e);
-                if (isUserInfo) {
-                    Wearable.getDataClient(this).deleteDataItems(itemUri);
-                }
+        } catch (Exception e) {
+            Log.e(TAG, "Error processing data change", e);
+            if (isUserInfo) {
+                Wearable.getDataClient(this).deleteDataItems(itemUri);
             }
         }
     }

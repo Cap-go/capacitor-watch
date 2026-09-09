@@ -145,11 +145,8 @@ final class CapgoWatchPendingReplyManager {
 
     private void scheduleOutgoingExpiry(final String callbackId) {
         cancelOutgoingExpiry(callbackId);
-        try {
-            outgoingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireOutgoing(callbackId), ttlMs, TimeUnit.MILLISECONDS));
-        } catch (RejectedExecutionException e) {
-            outgoing.remove(callbackId);
-        }
+        // Let RejectedExecutionException propagate to registerOutgoing so sendMessage can settle the PluginCall.
+        outgoingExpiryTasks.put(callbackId, scheduler.schedule(() -> expireOutgoing(callbackId), ttlMs, TimeUnit.MILLISECONDS));
     }
 
     private void abandonIncoming(final String callbackId) {

@@ -59,7 +59,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let expectsReply = call.getBool("expectsReply") ?? false
-        let message = CapgoWatchMessageConverter.convertToWatchMessage(data)
+        let message: [String: Any]
+        do {
+            message = try CapgoWatchMessageConverter.convertToWatchMessage(data)
+        } catch {
+            call.reject("Message payload cannot contain null values")
+            return
+        }
 
         if expectsReply {
             WCSession.default.sendMessage(message, replyHandler: { reply in
@@ -98,7 +104,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchContext = CapgoWatchMessageConverter.convertToWatchMessage(context)
+        let watchContext: [String: Any]
+        do {
+            watchContext = try CapgoWatchMessageConverter.convertToWatchMessage(context)
+        } catch {
+            call.reject("Context payload cannot contain null values")
+            return
+        }
 
         do {
             try WCSession.default.updateApplicationContext(watchContext)
@@ -124,7 +136,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchUserInfo = CapgoWatchMessageConverter.convertToWatchMessage(userInfo)
+        let watchUserInfo: [String: Any]
+        do {
+            watchUserInfo = try CapgoWatchMessageConverter.convertToWatchMessage(userInfo)
+        } catch {
+            call.reject("User info payload cannot contain null values")
+            return
+        }
         WCSession.default.transferUserInfo(watchUserInfo)
         call.resolve()
     }
@@ -140,6 +158,14 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
+        let replyData: [String: Any]
+        do {
+            replyData = try CapgoWatchMessageConverter.convertToWatchMessage(data)
+        } catch {
+            call.reject("Reply payload cannot contain null values")
+            return
+        }
+
         replyLock.lock()
         let replyHandler = pendingReplies.removeValue(forKey: callbackId)
         pendingReplyTimers.removeValue(forKey: callbackId)?.cancel()
@@ -150,7 +176,6 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let replyData = CapgoWatchMessageConverter.convertToWatchMessage(data)
         handler(replyData)
         call.resolve()
     }
@@ -321,13 +346,15 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
     }
 }
 
+enum CapgoWatchConversionError: Error {
+    case nullValueNotSupported
+}
+
 enum CapgoWatchMessageConverter {
-    static func convertToWatchMessage(_ jsObject: JSObject) -> [String: Any] {
+    static func convertToWatchMessage(_ jsObject: JSObject) throws -> [String: Any] {
         var result: [String: Any] = [:]
         for (key, value) in jsObject {
-            if let converted = convertJSValue(value) {
-                result[key] = converted
-            }
+            result[key] = try convertJSValue(value)
         }
         return result
     }
@@ -340,15 +367,16 @@ enum CapgoWatchMessageConverter {
         return result
     }
 
-    /// Strip NSNull so nested payloads remain valid property-list values for WCSession.
-    private static func convertJSValue(_ value: Any) -> Any? {
+    /// Reject NSNull — WCSession property lists cannot carry null, and silently
+    /// dropping null array elements would shift indices.
+    private static func convertJSValue(_ value: Any) throws -> Any {
         if value is NSNull {
-            return nil
+            throw CapgoWatchConversionError.nullValueNotSupported
         }
         if let dict = value as? JSObject {
-            return convertToWatchMessage(dict)
+            return try convertToWatchMessage(dict)
         } else if let array = value as? JSArray {
-            return array.compactMap { convertJSValue($0) }
+            return try array.map { try convertJSValue($0) }
         } else {
             return value
         }
