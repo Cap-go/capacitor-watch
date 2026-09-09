@@ -44,18 +44,18 @@ class CapgoWatchListenerService : WearableListenerService() {
                         dispatch { it.onApplicationContextReceived(context) }
                     }
                     isUserInfo -> {
-                        val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
-                        val payload = dataMap.getString("payload", "{}")
-                        val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
-                        dispatch { it.onUserInfoReceived(userInfo) }
-                        Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        try {
+                            val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+                            val payload = dataMap.getString("payload", "{}")
+                            val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
+                            dispatch { it.onUserInfoReceived(userInfo) }
+                        } finally {
+                            Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        }
                     }
                 }
             } catch (e: JSONException) {
                 Log.e(TAG, "Failed to parse data change on path $path", e)
-                if (isUserInfo) {
-                    Wearable.getDataClient(this).deleteDataItems(itemUri)
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to handle data change on path $path", e)
             }

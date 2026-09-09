@@ -277,6 +277,13 @@ export interface CapgoWatchPlugin {
    * ```
    */
   sendMessage(options: SendMessageOptionsWithReply): Promise<SendMessageResult>;
+  /**
+   * Send an interactive message to the watch without waiting for a reply.
+   *
+   * @param options - The message options (expectsReply omitted or false)
+   * @returns Promise that resolves when the message is sent
+   * @since 8.0.0
+   */
   sendMessage(options: SendMessageOptions): Promise<void>;
 
   /**

@@ -73,6 +73,7 @@ public class CapgoWatchEventStore {
         final JSONArray events = readEventsArray();
         final List<StoredEvent> drained = new ArrayList<>();
         final JSONArray retained = new JSONArray();
+        final long now = System.currentTimeMillis();
 
         for (int i = 0; i < events.length(); i++) {
             try {
@@ -82,9 +83,13 @@ public class CapgoWatchEventStore {
                     retained.put(entry);
                     continue;
                 }
+                final long timestamp = entry.optLong("timestamp", now);
+                if (now - timestamp > CapgoWatchConstants.MAX_EVENT_RETENTION_MS) {
+                    // Discard expired matching events instead of replaying them.
+                    continue;
+                }
                 final JSONObject payloadJson = entry.getJSONObject("payload");
                 final String replyNodeId = entry.optString("replyNodeId", null);
-                final long timestamp = entry.optLong("timestamp", System.currentTimeMillis());
                 drained.add(new StoredEvent(eventName, new JSObject(payloadJson.toString()), replyNodeId, timestamp));
             } catch (JSONException e) {
                 Log.w(TAG, "Dropping unreadable stored event at index " + i, e);
@@ -144,6 +149,25 @@ public class CapgoWatchEventStore {
     public void saveLastContext(final JSObject context) {
         synchronized (STORE_LOCK) {
             preferences.edit().putString(CapgoWatchConstants.PREF_LAST_CONTEXT, context.toString()).commit();
+        }
+    }
+
+
+    /**
+     * Persist reachability when it changed.
+     *
+     * @return true when the value changed (or was previously unset) and was saved
+     */
+    public boolean saveLastReachableIfChanged(final boolean isReachable) {
+        synchronized (STORE_LOCK) {
+            if (preferences.contains(CapgoWatchConstants.PREF_LAST_REACHABLE)) {
+                final boolean previous = preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false);
+                if (previous == isReachable) {
+                    return false;
+                }
+            }
+            preferences.edit().putBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, isReachable).commit();
+            return true;
         }
     }
 

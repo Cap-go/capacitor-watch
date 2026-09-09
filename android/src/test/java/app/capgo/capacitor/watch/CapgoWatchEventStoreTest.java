@@ -120,4 +120,39 @@ public class CapgoWatchEventStoreTest {
     public void loadLastContextReturnsNullWhenMissing() {
         assertNull(store.loadLastContext());
     }
+
+    @Test
+    public void drainDropsExpiredMatchingEvents() throws Exception {
+        final Context context = ApplicationProvider.getApplicationContext();
+        final long expiredAt = System.currentTimeMillis() - CapgoWatchConstants.MAX_EVENT_RETENTION_MS - 1_000L;
+        final long freshAt = System.currentTimeMillis();
+        context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .edit()
+            .putString(
+                "events",
+                "[" +
+                    "{"eventName":"messageReceived","payload":{"stale":true},"timestamp":" +
+                    expiredAt +
+                    "}," +
+                    "{"eventName":"messageReceived","payload":{"fresh":true},"timestamp":" +
+                    freshAt +
+                    "}," +
+                    "{"eventName":"userInfoReceived","payload":{"keep":true},"timestamp":" +
+                    expiredAt +
+                    "}" +
+                    "]"
+            )
+            .commit();
+
+        final var drained = new CapgoWatchEventStore(context).drainEventsFor("messageReceived");
+        assertEquals(1, drained.size());
+        assertEquals(true, drained.get(0).payload.getBoolean("fresh"));
+
+        final String rawEvents = context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .getString("events", "[]");
+        assertTrue(rawEvents.contains("userInfoReceived"));
+        assertTrue(rawEvents.contains("keep"));
+    }
 }
