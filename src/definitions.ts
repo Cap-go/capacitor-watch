@@ -263,7 +263,7 @@ export interface CapgoWatchPlugin {
    * @param options - The message options
    * @returns Promise that resolves when the message is sent
    * @throws Error if the watch is not reachable or session is not active
-   * @since 8.0.0
+   * @since 8.2.0
    * @example
    * ```typescript
    * await CapgoWatch.sendMessage({

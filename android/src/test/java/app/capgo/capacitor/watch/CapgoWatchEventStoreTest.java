@@ -86,10 +86,7 @@ public class CapgoWatchEventStoreTest {
             .edit()
             .putString(
                 "events",
-                "[" +
-                    "{\"eventName\":\"messageReceived\",\"payload\":{\"ok\":true},\"timestamp\":" +
-                    freshAt +
-                    "},{\"bad\":true}]"
+                "[" + "{\"eventName\":\"messageReceived\",\"payload\":{\"ok\":true},\"timestamp\":" + freshAt + "},{\"bad\":true}]"
             )
             .commit();
 

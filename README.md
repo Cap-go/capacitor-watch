@@ -553,7 +553,7 @@ Use this for time-sensitive, interactive communication.
 
 **Returns:** <code>Promise&lt;<a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
-**Since:** 8.0.0
+**Since:** 8.2.0
 
 --------------------
 

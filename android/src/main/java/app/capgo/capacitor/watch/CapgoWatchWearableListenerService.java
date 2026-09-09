@@ -1,8 +1,11 @@
 package app.capgo.capacitor.watch;
 
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import com.getcapacitor.JSObject;
+import com.google.android.gms.common.data.FreezableUtils;
 import com.google.android.gms.wearable.CapabilityInfo;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
@@ -14,7 +17,9 @@ import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -26,8 +31,16 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
 
     private static final String TAG = "CapgoWatchListenerSvc";
 
+    private static final long LOCAL_NODE_RETRY_MS = 1_000L;
+    private static final int LOCAL_NODE_MAX_RETRIES = 5;
+
     private CapgoWatchEventStore eventStore;
     private volatile String localNodeId;
+    private final Object pendingDataLock = new Object();
+    private List<DataEvent> pendingDataEvents;
+    private final AtomicBoolean resolvingLocalNode = new AtomicBoolean(false);
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private int localNodeRetryAttempts = 0;
 
     @Override
     public void onCreate() {
@@ -36,7 +49,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         CapgoWatchEventBridge.initialize(eventStore);
         Wearable.getNodeClient(this)
             .getLocalNode()
-            .addOnSuccessListener((node) -> localNodeId = node.getId())
+            .addOnSuccessListener((node) -> onLocalNodeResolved(node.getId()))
             .addOnFailureListener((e) -> Log.w(TAG, "Failed to resolve local node id", e));
     }
 
@@ -87,6 +100,59 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
 
     @Override
     public void onDataChanged(final DataEventBuffer dataEvents) {
+        final List<DataEvent> events = FreezableUtils.freezeIterable(dataEvents);
+        final String cachedLocalNodeId = localNodeId;
+        if (cachedLocalNodeId == null) {
+            enqueuePendingDataEvents(events);
+            resolveLocalNodeAndProcessPending();
+            return;
+        }
+        processDataEvents(events, cachedLocalNodeId);
+    }
+
+    private void onLocalNodeResolved(final String nodeId) {
+        localNodeId = nodeId;
+        localNodeRetryAttempts = 0;
+        resolvingLocalNode.set(false);
+        final List<DataEvent> pending;
+        synchronized (pendingDataLock) {
+            pending = pendingDataEvents;
+            pendingDataEvents = null;
+        }
+        if (pending != null && !pending.isEmpty()) {
+            processDataEvents(pending, nodeId);
+        }
+    }
+
+    private void enqueuePendingDataEvents(final List<DataEvent> events) {
+        synchronized (pendingDataLock) {
+            if (pendingDataEvents == null) {
+                pendingDataEvents = new ArrayList<>();
+            }
+            pendingDataEvents.addAll(events);
+        }
+    }
+
+    private void resolveLocalNodeAndProcessPending() {
+        if (!resolvingLocalNode.compareAndSet(false, true)) {
+            return;
+        }
+        Wearable.getNodeClient(this)
+            .getLocalNode()
+            .addOnSuccessListener((node) -> onLocalNodeResolved(node.getId()))
+            .addOnFailureListener((e) -> {
+                resolvingLocalNode.set(false);
+                localNodeRetryAttempts++;
+                Log.w(TAG, "Failed to resolve local node id; deferring data events (attempt " + localNodeRetryAttempts + ")", e);
+                if (localNodeRetryAttempts <= LOCAL_NODE_MAX_RETRIES) {
+                    mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
+                } else {
+                    Log.e(TAG, "Giving up resolving local node id; pending data events remain deferred");
+                }
+            });
+    }
+
+    private void processDataEvents(final List<DataEvent> dataEvents, final String cachedLocalNodeId) {
         for (final DataEvent event : dataEvents) {
             if (event.getType() != DataEvent.TYPE_CHANGED) {
                 continue;
@@ -107,8 +173,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
 
             // Skip the phone's own outgoing DataItems (URI host == local node id).
             final String host = itemUri.getHost();
-            final String cachedLocalNodeId = localNodeId;
-            if (host != null && cachedLocalNodeId != null && host.equals(cachedLocalNodeId)) {
+            if (host != null && host.equals(cachedLocalNodeId)) {
                 continue;
             }
 
