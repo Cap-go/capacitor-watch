@@ -237,8 +237,24 @@ public class CapgoWatchPlugin extends Plugin {
                     final JSONObject envelope = CapgoWatchMessagePayload.buildReplyEnvelope(callbackId, new JSONObject(data.toString()));
                     final byte[] payload = envelope.toString().getBytes(StandardCharsets.UTF_8);
 
+                    // Send to every connected node; keep the callback if any send queues.
+                    boolean anySendSucceeded = false;
+                    Exception lastSendError = null;
                     for (final Node node : nodes) {
-                        Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE_WITH_REPLY, payload));
+                        try {
+                            Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE_WITH_REPLY, payload));
+                            anySendSucceeded = true;
+                        } catch (ExecutionException | InterruptedException sendError) {
+                            lastSendError = sendError;
+                            Log.w(TAG, "Failed to send reply-message to node " + node.getId(), sendError);
+                            if (sendError instanceof InterruptedException) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    }
+                    if (!anySendSucceeded) {
+                        final String detail = lastSendError != null ? lastSendError.getMessage() : "unknown";
+                        manager.rejectOutgoing(callbackId, "Failed to send message: " + detail);
                     }
                 } else {
                     final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
