@@ -152,7 +152,6 @@ public class CapgoWatchEventStore {
         }
     }
 
-
     /**
      * Persist reachability when it changed.
      *
