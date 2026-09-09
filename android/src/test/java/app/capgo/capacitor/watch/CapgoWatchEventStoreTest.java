@@ -132,13 +132,13 @@ public class CapgoWatchEventStoreTest {
             .putString(
                 "events",
                 "[" +
-                    "{"eventName":"messageReceived","payload":{"stale":true},"timestamp":" +
+                    "{\"eventName\":\"messageReceived\",\"payload\":{\"stale\":true},\"timestamp\":" +
                     expiredAt +
                     "}," +
-                    "{"eventName":"messageReceived","payload":{"fresh":true},"timestamp":" +
+                    "{\"eventName\":\"messageReceived\",\"payload\":{\"fresh\":true},\"timestamp\":" +
                     freshAt +
                     "}," +
-                    "{"eventName":"userInfoReceived","payload":{"keep":true},"timestamp":" +
+                    "{\"eventName\":\"userInfoReceived\",\"payload\":{\"keep\":true},\"timestamp\":" +
                     expiredAt +
                     "}" +
                     "]"

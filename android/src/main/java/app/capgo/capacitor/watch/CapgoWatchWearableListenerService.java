@@ -163,6 +163,4 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             })
             .addOnFailureListener((e) -> Log.w(TAG, "Failed to refresh reachability", e));
     }
-
 }
-
