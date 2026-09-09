@@ -27,6 +27,7 @@ class CapgoWatchListenerService : WearableListenerService() {
     private val pendingDataLock = Any()
     private var pendingDataEvents: MutableList<DataEvent>? = null
     private var pendingPersistedUris: MutableList<Uri>? = null
+    private var inFlightPersistedUris: MutableList<Uri>? = null
     private val resolvingLocalNode = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
@@ -77,10 +78,20 @@ class CapgoWatchListenerService : WearableListenerService() {
                 persistPendingUrisLocked()
             }
         }
-        // Snapshot durable URIs after draining in-memory events so we do not double-process.
+        // Claim durable URIs so a concurrent onLocalNodeResolved cannot double-fetch.
         val persisted: List<Uri>
         synchronized(pendingDataLock) {
             persisted = pendingPersistedUris?.toList() ?: emptyList()
+            if (persisted.isNotEmpty()) {
+                pendingPersistedUris = null
+                val inFlight = inFlightPersistedUris ?: mutableListOf<Uri>().also { inFlightPersistedUris = it }
+                for (uri in persisted) {
+                    if (inFlight.none { it == uri }) {
+                        inFlight.add(uri)
+                    }
+                }
+                persistPendingUrisLocked()
+            }
         }
         if (persisted.isNotEmpty()) {
             fetchAndProcessPersistedUris(persisted, nodeId)
@@ -95,23 +106,29 @@ class CapgoWatchListenerService : WearableListenerService() {
                     Log.w(TAG, "Dropping pending data event; queue at capacity $MAX_PENDING_DATA_EVENTS")
                     break
                 }
+                val uri = event.dataItem.uri
+                if (uri != null && !addPendingUriLocked(uri)) {
+                    continue
+                }
                 pending.add(event)
-                event.dataItem.uri?.let { addPendingUriLocked(it) }
             }
             // Persist URIs on enqueue so process death before onDestroy cannot lose them.
             persistPendingUrisLocked()
         }
     }
 
-    private fun addPendingUriLocked(uri: Uri) {
+    private fun addPendingUriLocked(uri: Uri): Boolean {
         val uris = pendingPersistedUris ?: mutableListOf<Uri>().also { pendingPersistedUris = it }
-        if (uris.any { it == uri }) {
-            return
+        if (uris.any { it == uri } || inFlightPersistedUris?.any { it == uri } == true) {
+            return true
         }
-        while (uris.size >= MAX_PENDING_DATA_EVENTS) {
-            uris.removeAt(0)
+        val inFlightCount = inFlightPersistedUris?.size ?: 0
+        if (uris.size + inFlightCount >= MAX_PENDING_DATA_EVENTS) {
+            Log.w(TAG, "Rejecting pending data URI; durable queue at capacity $MAX_PENDING_DATA_EVENTS")
+            return false
         }
         uris.add(uri)
+        return true
     }
 
     private fun removePendingUriLocked(uri: Uri) {
@@ -119,11 +136,19 @@ class CapgoWatchListenerService : WearableListenerService() {
         if (pendingPersistedUris.isNullOrEmpty()) {
             pendingPersistedUris = null
         }
+        inFlightPersistedUris?.removeAll { it == uri }
+        if (inFlightPersistedUris.isNullOrEmpty()) {
+            inFlightPersistedUris = null
+        }
     }
 
     private fun hasPendingData(): Boolean {
         synchronized(pendingDataLock) {
-            return !pendingDataEvents.isNullOrEmpty() || !pendingPersistedUris.isNullOrEmpty()
+            return (
+                !pendingDataEvents.isNullOrEmpty() ||
+                    !pendingPersistedUris.isNullOrEmpty() ||
+                    !inFlightPersistedUris.isNullOrEmpty()
+            )
         }
     }
 
@@ -150,7 +175,16 @@ class CapgoWatchListenerService : WearableListenerService() {
                 if (localNodeRetryAttempts >= LOCAL_NODE_MAX_RETRIES) {
                     Log.e(
                         TAG,
-                        "Local node still unresolved after $localNodeRetryAttempts attempts; stopping retries (pending retained until local node resolves)",
+                        "Local node still unresolved after $localNodeRetryAttempts attempts; pausing rapid retries, scheduling long-interval retry",
+                    )
+                    // Stop the rapid backoff loop (CodeRabbit), but keep a slow retry so
+                    // recovery without a new data event or service restart is still possible.
+                    mainHandler.postDelayed(
+                        {
+                            localNodeRetryAttempts = 0
+                            resolveLocalNodeAndProcessPending()
+                        },
+                        LOCAL_NODE_LONG_RETRY_MS,
                     )
                     return@addOnFailureListener
                 }
@@ -178,6 +212,7 @@ class CapgoWatchListenerService : WearableListenerService() {
     private fun persistPendingUrisLocked() {
         val uris = JSONArray()
         pendingPersistedUris?.forEach { uri -> uris.put(uri.toString()) }
+        inFlightPersistedUris?.forEach { uri -> uris.put(uri.toString()) }
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (uris.length() == 0) {
             prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
@@ -357,6 +392,7 @@ class CapgoWatchListenerService : WearableListenerService() {
         private const val TAG = "CapgoWatchListener"
         private const val LOCAL_NODE_RETRY_MS = 1_000L
         private const val LOCAL_NODE_MAX_RETRIES = 5
+        private const val LOCAL_NODE_LONG_RETRY_MS = 60_000L
         private const val MAX_PENDING_DATA_EVENTS = 100
         private const val PREFS_NAME = "capgo_watch_sdk"
         private const val PREF_PENDING_DATA_URIS = "pending_data_uris"

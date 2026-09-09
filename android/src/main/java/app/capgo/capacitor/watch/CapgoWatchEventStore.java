@@ -53,10 +53,28 @@ public class CapgoWatchEventStore {
 
     /** Clear PREF_LAST_REACHABLE so a later reachability callback can retry persistence. */
     public void clearLastReachable() {
+        clearLastReachableIf(null);
+    }
+
+    /**
+     * Atomically clear PREF_LAST_REACHABLE only when it still matches {@code expected}
+     * (or clear unconditionally when {@code expected} is null).
+     */
+    public boolean clearLastReachableIf(final Boolean expected) {
         synchronized (STORE_LOCK) {
+            if (expected != null) {
+                if (!preferences.contains(CapgoWatchConstants.PREF_LAST_REACHABLE)) {
+                    return false;
+                }
+                if (preferences.getBoolean(CapgoWatchConstants.PREF_LAST_REACHABLE, false) != expected) {
+                    return false;
+                }
+            }
             if (!preferences.edit().remove(CapgoWatchConstants.PREF_LAST_REACHABLE).commit()) {
                 Log.w(TAG, "Failed to clear last reachable state");
+                return false;
             }
+            return true;
         }
     }
 
