@@ -2,7 +2,10 @@ import { WebPlugin } from '@capacitor/core';
 
 import type {
   CapgoWatchPlugin,
+  ReceivedState,
   SendMessageOptions,
+  SendMessageOptionsWithReply,
+  SendMessageResult,
   UpdateContextOptions,
   TransferUserInfoOptions,
   ReplyMessageOptions,
@@ -10,8 +13,11 @@ import type {
 } from './definitions';
 
 export class CapgoWatchWeb extends WebPlugin implements CapgoWatchPlugin {
-  async sendMessage(_options: SendMessageOptions): Promise<void> {
-    throw this.unavailable('Apple Watch is not available on web');
+  async sendMessage(_options: SendMessageOptionsWithReply): Promise<SendMessageResult>;
+  async sendMessage(_options: SendMessageOptions & { expectsReply?: false }): Promise<void>;
+  async sendMessage(_options: SendMessageOptions): Promise<void | SendMessageResult>;
+  async sendMessage(_options: SendMessageOptions): Promise<void | SendMessageResult> {
+    throw this.unavailable('Watch is not available on web');
   }
 
   async updateApplicationContext(_options: UpdateContextOptions): Promise<void> {
@@ -34,6 +40,10 @@ export class CapgoWatchWeb extends WebPlugin implements CapgoWatchPlugin {
       isReachable: false,
       activationState: 0,
     };
+  }
+
+  async getReceivedState(): Promise<ReceivedState> {
+    return { context: null };
   }
 
   async getPluginVersion(): Promise<{ version: string }> {
