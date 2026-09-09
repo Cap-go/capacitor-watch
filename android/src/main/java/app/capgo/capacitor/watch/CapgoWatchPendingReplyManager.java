@@ -4,6 +4,7 @@ import android.util.Log;
 import com.getcapacitor.PluginCall;
 import com.google.android.gms.wearable.MessageClient;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
@@ -64,7 +65,13 @@ final class CapgoWatchPendingReplyManager {
     void registerIncoming(final String callbackId, final String nodeId) {
         incoming.put(callbackId, new IncomingPendingReply(nodeId, System.currentTimeMillis()));
         if (eventStore != null) {
-            eventStore.savePendingReply(callbackId, nodeId);
+            final List<String> capacityEvicted = eventStore.savePendingReply(callbackId, nodeId);
+            // Capacity eviction must not be silent while a live listener holds the callback:
+            // expire so the watch gets an empty reply and replyToMessage cannot claim a
+            // registration that would be missing after process restart.
+            for (final String evictedId : capacityEvicted) {
+                expireIncoming(evictedId);
+            }
         }
         scheduleIncomingExpiry(callbackId);
     }

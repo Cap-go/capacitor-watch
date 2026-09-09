@@ -190,16 +190,23 @@ public class CapgoWatchEventStore {
         return drained;
     }
 
-    public void savePendingReply(final String callbackId, final String nodeId) {
+    /**
+     * Persist a pending-reply registration.
+     *
+     * @return callbackIds removed by the capacity cap (callers must explicitly expire them;
+     *         age-pruned entries are omitted — TTL handles those)
+     */
+    public List<String> savePendingReply(final String callbackId, final String nodeId) {
+        final List<String> capacityEvicted = new ArrayList<>();
         synchronized (STORE_LOCK) {
             final JSONObject pending = readPendingRepliesObject();
             try {
-                prunePendingRepliesUnlocked(pending);
+                pruneExpiredPendingRepliesUnlocked(pending);
                 final JSONObject entry = new JSONObject();
                 entry.put("nodeId", nodeId);
                 entry.put("createdAt", System.currentTimeMillis());
                 pending.put(callbackId, entry);
-                prunePendingRepliesUnlocked(pending);
+                capacityEvicted.addAll(evictOverflowPendingRepliesUnlocked(pending));
                 if (!preferences.edit().putString(KEY_PENDING_REPLIES, pending.toString()).commit()) {
                     Log.w(TAG, "Failed to commit pending reply for " + callbackId);
                 }
@@ -207,9 +214,10 @@ public class CapgoWatchEventStore {
                 Log.e(TAG, "Failed to persist pending reply for " + callbackId, e);
             }
         }
+        return capacityEvicted;
     }
 
-    private void prunePendingRepliesUnlocked(final JSONObject pending) {
+    private void pruneExpiredPendingRepliesUnlocked(final JSONObject pending) {
         final long now = System.currentTimeMillis();
         final List<String> expired = new ArrayList<>();
         final Iterator<String> keys = pending.keys();
@@ -223,6 +231,16 @@ public class CapgoWatchEventStore {
         for (final String key : expired) {
             pending.remove(key);
         }
+    }
+
+    /**
+     * Drop oldest entries when over {@link CapgoWatchConstants#MAX_PENDING_REPLIES}.
+     * Returns evicted ids so callers can explicitly expire in-memory callbacks
+     * (silent drop leaves live listeners with non-durable reply registrations).
+     */
+    private List<String> evictOverflowPendingRepliesUnlocked(final JSONObject pending) {
+        final List<String> evicted = new ArrayList<>();
+        final long now = System.currentTimeMillis();
         while (pending.length() > CapgoWatchConstants.MAX_PENDING_REPLIES) {
             String oldestKey = null;
             long oldestAt = Long.MAX_VALUE;
@@ -240,7 +258,10 @@ public class CapgoWatchEventStore {
                 break;
             }
             pending.remove(oldestKey);
+            evicted.add(oldestKey);
+            Log.w(TAG, "Evicting pending reply callbackId=" + oldestKey + " due to capacity cap");
         }
+        return evicted;
     }
 
     public void removePendingReply(final String callbackId) {

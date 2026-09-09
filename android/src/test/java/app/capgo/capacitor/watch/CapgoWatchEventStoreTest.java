@@ -146,6 +146,35 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
+    public void savePendingReplyReturnsCapacityEvictions() throws Exception {
+        // Seed oldest entries with distinct createdAt so eviction order is deterministic.
+        final Context context = ApplicationProvider.getApplicationContext();
+        final org.json.JSONObject seeded = new org.json.JSONObject();
+        final long base = System.currentTimeMillis() - 60_000L;
+        for (int i = 0; i < CapgoWatchConstants.MAX_PENDING_REPLIES; i++) {
+            final org.json.JSONObject entry = new org.json.JSONObject();
+            entry.put("nodeId", "node-" + i);
+            entry.put("createdAt", base + i);
+            seeded.put("callback-" + i, entry);
+        }
+        context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .edit()
+            .putString("pending_replies", seeded.toString())
+            .commit();
+
+        final CapgoWatchEventStore capped = new CapgoWatchEventStore(context);
+        final var evicted = capped.savePendingReply("callback-new", "node-new");
+        assertEquals(1, evicted.size());
+        assertEquals("callback-0", evicted.get(0));
+
+        final var pending = capped.loadPendingReplies();
+        assertEquals(CapgoWatchConstants.MAX_PENDING_REPLIES, pending.size());
+        assertTrue(pending.containsKey("callback-new"));
+        assertFalse(pending.containsKey("callback-0"));
+    }
+
+    @Test
     public void saveAndLoadLastContext() {
         final JSObject context = new JSObject();
         context.put("theme", "dark");

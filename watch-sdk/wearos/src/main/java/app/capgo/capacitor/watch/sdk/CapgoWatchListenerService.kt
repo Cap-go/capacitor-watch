@@ -30,6 +30,7 @@ class CapgoWatchListenerService : WearableListenerService() {
     private var inFlightPersistedUris: MutableList<Uri>? = null
     private val resolvingLocalNode = AtomicBoolean(false)
     private val drainInProgress = AtomicBoolean(false)
+    private val pendingDrainRequested = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
 
@@ -66,9 +67,13 @@ class CapgoWatchListenerService : WearableListenerService() {
         localNodeRetryAttempts = 0
         resolvingLocalNode.set(false)
         if (!drainInProgress.compareAndSet(false, true)) {
+            // Another drain is active; request a follow-up so events enqueued during
+            // that drain are not stranded once localNodeId is set.
+            pendingDrainRequested.set(true)
             return
         }
         try {
+            pendingDrainRequested.set(false)
             val pending: List<DataEvent>?
             val persisted: List<Uri>
             synchronized(pendingDataLock) {
@@ -85,14 +90,26 @@ class CapgoWatchListenerService : WearableListenerService() {
                         }
                     }
                 }
-                // Pending-event URIs are processed from frozen events; drop durable copies.
+                // Keep frozen-event URIs durable in inFlight until processDataEvents
+                // completes; process death between persist and process must not drop them.
                 pending?.forEach { event ->
-                    event.dataItem.uri?.let { removePendingUriLocked(it) }
+                    event.dataItem.uri?.let { uri ->
+                        val inFlight = inFlightPersistedUris ?: mutableListOf<Uri>().also { inFlightPersistedUris = it }
+                        if (inFlight.none { it == uri }) {
+                            inFlight.add(uri)
+                        }
+                    }
                 }
                 persistPendingUrisLocked()
             }
             if (!pending.isNullOrEmpty()) {
                 processDataEvents(pending, nodeId)
+                synchronized(pendingDataLock) {
+                    pending.forEach { event ->
+                        event.dataItem.uri?.let { removePendingUriLocked(it) }
+                    }
+                    persistPendingUrisLocked()
+                }
             }
             if (persisted.isNotEmpty()) {
                 val toFetch = synchronized(pendingDataLock) {
@@ -104,6 +121,16 @@ class CapgoWatchListenerService : WearableListenerService() {
             }
         } finally {
             drainInProgress.set(false)
+            if (pendingDrainRequested.compareAndSet(true, false) || hasQueuedPendingEvents()) {
+                mainHandler.post { onLocalNodeResolved(nodeId) }
+            }
+        }
+    }
+
+    /** Pending events/URIs waiting to be drained (excludes in-flight fetches). */
+    private fun hasQueuedPendingEvents(): Boolean {
+        synchronized(pendingDataLock) {
+            return !pendingDataEvents.isNullOrEmpty() || !pendingPersistedUris.isNullOrEmpty()
         }
     }
 
