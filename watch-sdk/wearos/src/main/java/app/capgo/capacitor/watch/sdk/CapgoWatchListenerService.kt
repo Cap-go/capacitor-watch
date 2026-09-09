@@ -37,6 +37,7 @@ class CapgoWatchListenerService : WearableListenerService() {
     private val pendingDrainRequested = AtomicBoolean(false)
     private val persistGeneration = AtomicLong(0)
     private val lastCommittedGeneration = AtomicLong(0)
+    private val persistCommitLock = Any()
     private val persistExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
@@ -272,21 +273,25 @@ class CapgoWatchListenerService : WearableListenerService() {
      * serialized; stale generations are skipped so older cleanup cannot clobber newer state.
      */
     private fun commitPendingUrisSnapshot(payload: String?, generation: Long) {
-        if (generation < lastCommittedGeneration.get()) {
-            return
-        }
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val ok =
-            if (payload == null) {
-                prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
-            } else {
-                prefs.edit().putString(PREF_PENDING_DATA_URIS, payload).commit()
+        // Serialize executor commits and inline fallbacks so a timed-out/rejected
+        // fallback cannot overwrite a newer in-flight write.
+        synchronized(persistCommitLock) {
+            if (generation < lastCommittedGeneration.get()) {
+                return
             }
-        if (!ok) {
-            Log.w(TAG, "Failed to persist pending data URIs")
-            return
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ok =
+                if (payload == null) {
+                    prefs.edit().remove(PREF_PENDING_DATA_URIS).commit()
+                } else {
+                    prefs.edit().putString(PREF_PENDING_DATA_URIS, payload).commit()
+                }
+            if (!ok) {
+                Log.w(TAG, "Failed to persist pending data URIs")
+                return
+            }
+            lastCommittedGeneration.set(generation)
         }
-        lastCommittedGeneration.set(generation)
     }
 
     /**
