@@ -78,16 +78,25 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
-    public void drainDropsUnreadableEvents() {
+    public void drainDropsUnreadableEvents() throws Exception {
         final Context context = ApplicationProvider.getApplicationContext();
+        final long freshAt = System.currentTimeMillis();
         context
             .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
             .edit()
-            .putString("events", "[{\"eventName\":\"messageReceived\",\"payload\":{\"ok\":true},\"timestamp\":1},{\"bad\":true}]")
+            .putString(
+                "events",
+                "[" +
+                    "{\"eventName\":\"messageReceived\",\"payload\":{\"ok\":true},\"timestamp\":" +
+                    freshAt +
+                    "},{\"bad\":true}]"
+            )
             .commit();
 
         final var events = new CapgoWatchEventStore(context).drainAll();
         assertEquals(1, events.size());
+        assertEquals("messageReceived", events.get(0).eventName);
+        assertEquals(true, events.get(0).payload.getBoolean("ok"));
         final String rawEvents = context
             .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
             .getString("events", "[]");
