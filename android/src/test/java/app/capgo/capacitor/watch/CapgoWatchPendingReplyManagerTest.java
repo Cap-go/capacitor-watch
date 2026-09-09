@@ -70,7 +70,7 @@ public class CapgoWatchPendingReplyManagerTest {
     }
 
     @Test
-    public void registerIncomingExpiresCapacityEvictedCallbacks() throws Exception {
+    public void registerIncomingRejectsWhenDurableStoreAtCapacity() throws Exception {
         final Context context = ApplicationProvider.getApplicationContext();
         final org.json.JSONObject seeded = new org.json.JSONObject();
         // Keep createdAt well within the manager TTL so restore does not immediately expire.
@@ -96,10 +96,10 @@ public class CapgoWatchPendingReplyManagerTest {
 
         manager.registerIncoming("callback-new", "node-new");
 
-        // Oldest durable entry was capacity-evicted and explicitly expired from memory.
-        assertNull(manager.getIncoming("callback-0"));
-        assertNotNull(manager.getIncoming("callback-new"));
-        assertFalse(eventStore.loadPendingReplies().containsKey("callback-0"));
-        assertTrue(eventStore.loadPendingReplies().containsKey("callback-new"));
+        // New registration was explicitly rejected; durable older callbacks preserved.
+        assertNull(manager.getIncoming("callback-new"));
+        assertNotNull(manager.getIncoming("callback-0"));
+        assertFalse(eventStore.loadPendingReplies().containsKey("callback-new"));
+        assertTrue(eventStore.loadPendingReplies().containsKey("callback-0"));
     }
 }

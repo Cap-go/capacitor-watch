@@ -193,28 +193,43 @@ public class CapgoWatchEventStore {
     /**
      * Persist a pending-reply registration.
      *
-     * @return callbackIds removed by the capacity cap (callers must explicitly expire them;
-     *         age-pruned entries are omitted — TTL handles those)
+     * <p>Age-expired entries are pruned first. When the store is already at
+     * {@link CapgoWatchConstants#MAX_PENDING_REPLIES}, the new registration is
+     * rejected (existing durable callbacks are preserved). Callers must explicitly
+     * reject/expire the rejected request — never silently drop older mappings.
+     *
+     * @return {@code true} when the registration was persisted
      */
-    public List<String> savePendingReply(final String callbackId, final String nodeId) {
-        final List<String> capacityEvicted = new ArrayList<>();
+    public boolean savePendingReply(final String callbackId, final String nodeId) {
         synchronized (STORE_LOCK) {
             final JSONObject pending = readPendingRepliesObject();
             try {
                 pruneExpiredPendingRepliesUnlocked(pending);
+                final boolean updatingExisting = pending.has(callbackId);
+                if (!updatingExisting && pending.length() >= CapgoWatchConstants.MAX_PENDING_REPLIES) {
+                    Log.w(
+                        TAG,
+                        "Rejecting pending reply callbackId=" +
+                            callbackId +
+                            "; durable queue at capacity " +
+                            CapgoWatchConstants.MAX_PENDING_REPLIES
+                    );
+                    return false;
+                }
                 final JSONObject entry = new JSONObject();
                 entry.put("nodeId", nodeId);
                 entry.put("createdAt", System.currentTimeMillis());
                 pending.put(callbackId, entry);
-                capacityEvicted.addAll(evictOverflowPendingRepliesUnlocked(pending));
                 if (!preferences.edit().putString(KEY_PENDING_REPLIES, pending.toString()).commit()) {
                     Log.w(TAG, "Failed to commit pending reply for " + callbackId);
+                    return false;
                 }
+                return true;
             } catch (JSONException e) {
                 Log.e(TAG, "Failed to persist pending reply for " + callbackId, e);
+                return false;
             }
         }
-        return capacityEvicted;
     }
 
     private void pruneExpiredPendingRepliesUnlocked(final JSONObject pending) {
@@ -231,37 +246,6 @@ public class CapgoWatchEventStore {
         for (final String key : expired) {
             pending.remove(key);
         }
-    }
-
-    /**
-     * Drop oldest entries when over {@link CapgoWatchConstants#MAX_PENDING_REPLIES}.
-     * Returns evicted ids so callers can explicitly expire in-memory callbacks
-     * (silent drop leaves live listeners with non-durable reply registrations).
-     */
-    private List<String> evictOverflowPendingRepliesUnlocked(final JSONObject pending) {
-        final List<String> evicted = new ArrayList<>();
-        final long now = System.currentTimeMillis();
-        while (pending.length() > CapgoWatchConstants.MAX_PENDING_REPLIES) {
-            String oldestKey = null;
-            long oldestAt = Long.MAX_VALUE;
-            final Iterator<String> iter = pending.keys();
-            while (iter.hasNext()) {
-                final String key = iter.next();
-                final JSONObject entry = pending.optJSONObject(key);
-                final long createdAt = entry != null ? entry.optLong("createdAt", now) : now;
-                if (createdAt < oldestAt) {
-                    oldestAt = createdAt;
-                    oldestKey = key;
-                }
-            }
-            if (oldestKey == null) {
-                break;
-            }
-            pending.remove(oldestKey);
-            evicted.add(oldestKey);
-            Log.w(TAG, "Evicting pending reply callbackId=" + oldestKey + " due to capacity cap");
-        }
-        return evicted;
     }
 
     public void removePendingReply(final String callbackId) {
