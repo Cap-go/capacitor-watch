@@ -27,12 +27,17 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private static final String TAG = "CapgoWatchListenerSvc";
 
     private CapgoWatchEventStore eventStore;
+    private volatile String localNodeId;
 
     @Override
     public void onCreate() {
         super.onCreate();
         eventStore = new CapgoWatchEventStore(getApplicationContext());
         CapgoWatchEventBridge.initialize(eventStore);
+        Wearable.getNodeClient(this)
+            .getLocalNode()
+            .addOnSuccessListener((node) -> localNodeId = node.getId())
+            .addOnFailureListener((e) -> Log.w(TAG, "Failed to resolve local node id", e));
     }
 
     @Override
@@ -100,6 +105,13 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 continue;
             }
 
+            // Skip the phone's own outgoing DataItems (URI host == local node id).
+            final String host = itemUri.getHost();
+            final String cachedLocalNodeId = localNodeId;
+            if (host != null && cachedLocalNodeId != null && host.equals(cachedLocalNodeId)) {
+                continue;
+            }
+
             try {
                 final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
                 final String payload = dataMap.getString("payload", "{}");
@@ -144,7 +156,13 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private void refreshReachability() {
         Wearable.getNodeClient(this)
             .getConnectedNodes()
-            .addOnSuccessListener((List<Node> nodes) -> CapgoWatchEventBridge.dispatchReachability(!nodes.isEmpty()))
+            .addOnSuccessListener((List<Node> nodes) -> {
+                // CapgoWatchEventBridge compares against the last persisted value and
+                // dispatches/persists only when reachability actually changed.
+                CapgoWatchEventBridge.dispatchReachability(!nodes.isEmpty());
+            })
             .addOnFailureListener((e) -> Log.w(TAG, "Failed to refresh reachability", e));
     }
+
 }
+

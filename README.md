@@ -507,8 +507,8 @@ struct StatusView: View {
 
 <docgen-index>
 
-* [`sendMessage(...)`](#sendmessage)
-* [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(SendMessageOptionsWithReply)`](#sendmessagesendmessageoptionswithreply)
+* [`sendMessage(SendMessageOptions)`](#sendmessagesendmessageoptions)
 * [`updateApplicationContext(...)`](#updateapplicationcontext)
 * [`transferUserInfo(...)`](#transferuserinfo)
 * [`replyToMessage(...)`](#replytomessage)
@@ -537,7 +537,7 @@ Provides bidirectional messaging between the phone and a paired watch.
 - **Android**: uses Google Wear OS Data Layer API (play-services-wearable) to communicate with a Wear OS watch.
 - **Web**: not supported; all methods throw or return safe defaults.
 
-### sendMessage(...)
+### sendMessage(SendMessageOptionsWithReply)
 
 ```typescript
 sendMessage(options: SendMessageOptionsWithReply) => Promise<SendMessageResult>
@@ -558,15 +558,19 @@ Use this for time-sensitive, interactive communication.
 --------------------
 
 
-### sendMessage(...)
+### sendMessage(SendMessageOptions)
 
 ```typescript
 sendMessage(options: SendMessageOptions) => Promise<void>
 ```
 
-| Param         | Type                                                              |
-| ------------- | ----------------------------------------------------------------- |
-| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> |
+Send an interactive message to the watch without waiting for a reply.
+
+| Param         | Type                                                              | Description                                           |
+| ------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
+| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> | - The message options (expectsReply omitted or false) |
+
+**Since:** 8.0.0
 
 --------------------
 

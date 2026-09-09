@@ -23,6 +23,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -50,7 +51,7 @@ public class CapgoWatchPlugin extends Plugin {
     private CapgoWatchEventStore eventStore;
 
     private String watchCapability = CapgoWatchConstants.DEFAULT_CAPABILITY;
-    private boolean lastReachable = false;
+    private final AtomicBoolean lastReachable = new AtomicBoolean(false);
 
     private final CapabilityClient.OnCapabilityChangedListener capabilityChangedListener = (info) -> refreshReachability();
 
@@ -99,6 +100,7 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     @Override
+    @PluginMethod(returnType = PluginMethod.RETURN_NONE)
     public void addListener(final PluginCall call) {
         super.addListener(call);
         final String eventName = call.getString("eventName");
@@ -188,9 +190,15 @@ public class CapgoWatchPlugin extends Plugin {
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
-                if (isReachable != lastReachable) {
-                    lastReachable = isReachable;
-                    CapgoWatchEventBridge.dispatchReachability(isReachable);
+                while (true) {
+                    final boolean previous = lastReachable.get();
+                    if (previous == isReachable) {
+                        break;
+                    }
+                    if (lastReachable.compareAndSet(previous, isReachable)) {
+                        CapgoWatchEventBridge.dispatchReachability(isReachable);
+                        break;
+                    }
                 }
             } catch (ExecutionException | InterruptedException e) {
                 Log.w(TAG, "Failed to determine reachability", e);
@@ -368,13 +376,20 @@ public class CapgoWatchPlugin extends Plugin {
             if (context == null) {
                 DataItemBuffer buffer = null;
                 try {
+                    final String localNodeId = Tasks.await(nodeClient.getLocalNode()).getId();
                     buffer = Tasks.await(dataClient.getDataItems(CapgoWatchConstants.contextDataItemUri()));
                     for (final DataItem item : buffer) {
+                        final String host = item.getUri().getHost();
+                        if (host != null && host.equals(localNodeId)) {
+                            // Skip the phone's own outgoing context written by updateApplicationContext.
+                            continue;
+                        }
                         final String payload = com.google.android.gms.wearable.DataMapItem.fromDataItem(item)
                             .getDataMap()
                             .getString("payload", "{}");
                         context = new JSObject(new JSONObject(payload).toString());
                         eventStore.saveLastContext(context);
+                        break;
                     }
                 } catch (Exception e) {
                     Log.w(TAG, "Failed to load application context from Data Layer", e);

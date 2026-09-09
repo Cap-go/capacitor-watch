@@ -64,6 +64,10 @@ public final class CapgoWatchEventBridge {
     }
 
     public static void dispatchReachability(final boolean isReachable) {
+        if (eventStore != null && !eventStore.saveLastReachableIfChanged(isReachable)) {
+            return;
+        }
+
         final JSObject evt = new JSObject();
         evt.put("isReachable", isReachable);
         dispatch("reachabilityChanged", evt, true);

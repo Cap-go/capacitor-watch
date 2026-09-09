@@ -47,7 +47,7 @@
     "eslint": "eslint . --ext ts",
     "prettier": "prettier-pretty-check \"**/*.{css,html,ts,js,java}\" --plugin=prettier-plugin-java",
     "swiftlint": "node-swiftlint",
-    "docgen": "docgen --api CapgoWatchPlugin --output-readme README.md --output-json dist/docs.json",
+    "docgen": "node scripts/docgen.mjs --api CapgoWatchPlugin --output-readme README.md --output-json dist/docs.json",
     "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs",
     "test": "tsc && node --test src/__tests__/defaults.test.mjs",
     "clean": "rimraf ./dist",

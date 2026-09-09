@@ -22,6 +22,7 @@ public final class CapgoWatchConstants {
 
     public static final String PREF_EVENT_STORE = "capgo_watch_event_store";
     public static final String PREF_LAST_CONTEXT = "capgo_watch_last_context";
+    public static final String PREF_LAST_REACHABLE = "capgo_watch_last_reachable";
 
     /** Maximum number of persisted watch events retained for replay. */
     public static final int MAX_STORED_EVENTS = 100;
