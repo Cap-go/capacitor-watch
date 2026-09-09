@@ -14,7 +14,8 @@ import type {
 
 export class CapgoWatchWeb extends WebPlugin implements CapgoWatchPlugin {
   async sendMessage(_options: SendMessageOptionsWithReply): Promise<SendMessageResult>;
-  async sendMessage(_options: SendMessageOptions): Promise<void>;
+  async sendMessage(_options: SendMessageOptions & { expectsReply?: false }): Promise<void>;
+  async sendMessage(_options: SendMessageOptions): Promise<void | SendMessageResult>;
   async sendMessage(_options: SendMessageOptions): Promise<void | SendMessageResult> {
     throw this.unavailable('Watch is not available on web');
   }

@@ -64,8 +64,25 @@ public final class CapgoWatchEventBridge {
     }
 
     public static void dispatchReachability(final boolean isReachable) {
-        if (eventStore != null && !eventStore.saveLastReachableIfChanged(isReachable)) {
-            return;
+        if (eventStore != null) {
+            final CapgoWatchPlugin plugin = pluginRef.get();
+            final boolean live = plugin != null && plugin.hasWatchListeners("reachabilityChanged");
+            if (live) {
+                // Live listeners: preference-based change detection.
+                if (!eventStore.saveLastReachableIfChanged(isReachable)) {
+                    return;
+                }
+            } else {
+                // Background queue: dedupe only while an equivalent event remains retained.
+                // Do not rely on preference alone — expired/evicted events clear it, but
+                // even if clear is delayed, hasQueuedReachability skips expired entries.
+                if (eventStore.hasQueuedReachability(isReachable)) {
+                    return;
+                }
+                if (!eventStore.forceSaveLastReachable(isReachable)) {
+                    return;
+                }
+            }
         }
 
         final JSObject evt = new JSObject();

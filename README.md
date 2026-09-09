@@ -508,6 +508,7 @@ struct StatusView: View {
 <docgen-index>
 
 * [`sendMessage(SendMessageOptionsWithReply)`](#sendmessagesendmessageoptionswithreply)
+* [`sendMessage(SendMessageOptions & { expectsReply?: false | undefined; })`](#sendmessagesendmessageoptions---expectsreply-false--undefined-)
 * [`sendMessage(SendMessageOptions)`](#sendmessagesendmessageoptions)
 * [`updateApplicationContext(...)`](#updateapplicationcontext)
 * [`transferUserInfo(...)`](#transferuserinfo)
@@ -558,19 +559,39 @@ Use this for time-sensitive, interactive communication.
 --------------------
 
 
-### sendMessage(SendMessageOptions)
+### sendMessage(SendMessageOptions & { expectsReply?: false | undefined; })
 
 ```typescript
-sendMessage(options: SendMessageOptions) => Promise<void>
+sendMessage(options: SendMessageOptions & { expectsReply?: false; }) => Promise<void>
 ```
 
 Send an interactive message to the watch without waiting for a reply.
 
-| Param         | Type                                                              | Description                                           |
-| ------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
-| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> | - The message options (expectsReply omitted or false) |
+| Param         | Type                                                                                          | Description                                           |
+| ------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a> & { expectsReply?: false; }</code> | - The message options (expectsReply omitted or false) |
 
 **Since:** 8.0.0
+
+--------------------
+
+
+### sendMessage(SendMessageOptions)
+
+```typescript
+sendMessage(options: SendMessageOptions) => Promise<void | SendMessageResult>
+```
+
+Send an interactive message when `expectsReply` is not known statically.
+Prefer the overloads above when `expectsReply` is a boolean literal.
+
+| Param         | Type                                                              | Description           |
+| ------------- | ----------------------------------------------------------------- | --------------------- |
+| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> | - The message options |
+
+**Returns:** <code>Promise&lt;void | <a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
+
+**Since:** 8.2.0
 
 --------------------
 
@@ -826,9 +847,10 @@ Result returned when `sendMessage` is called with `expectsReply: true`.
 
 Options for sending a message that expects a reply from the watch.
 
-| Prop               | Type              | Description                                                                                                                     |
-| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **`expectsReply`** | <code>true</code> | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). |
+| Prop               | Type                                                          | Description                                                                                                                     |
+| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects).                       |
+| **`expectsReply`** | <code>true</code>                                             | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). |
 
 
 #### SendMessageOptions
