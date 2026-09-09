@@ -25,6 +25,14 @@ public class CapgoWatchMessagePayloadTest {
     public void isReplyEnvelopeRequiresCallbackIdAndObjectData() throws Exception {
         assertFalse(CapgoWatchMessagePayload.isReplyEnvelope(new JSONObject("{\"action\":\"ping\"}")));
         assertFalse(CapgoWatchMessagePayload.isReplyEnvelope(new JSONObject("{\"callbackId\":\"abc\",\"data\":\"literal\"}")));
+        assertFalse(CapgoWatchMessagePayload.isReplyEnvelope(new JSONObject("{\"callbackId\":\"\",\"data\":{\"ok\":true}}")));
+        assertFalse(CapgoWatchMessagePayload.isReplyEnvelope(new JSONObject("{\"callbackId\":123,\"data\":{\"ok\":true}}")));
+
+        final JSONObject nullCallbackId = new JSONObject();
+        nullCallbackId.put("callbackId", JSONObject.NULL);
+        nullCallbackId.put("data", new JSONObject("{\"ok\":true}"));
+        assertFalse(CapgoWatchMessagePayload.isReplyEnvelope(nullCallbackId));
+
         assertTrue(CapgoWatchMessagePayload.isReplyEnvelope(new JSONObject("{\"callbackId\":\"abc\",\"data\":{\"ok\":true}}")));
     }
 

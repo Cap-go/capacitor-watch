@@ -79,7 +79,6 @@ public class CapgoWatchPlugin extends Plugin {
             .addListener(capabilityChangedListener, watchCapability)
             .addOnFailureListener((e) -> Log.w(TAG, "Failed to register capability listener", e));
 
-        replayStoredEvents();
         refreshReachability();
     }
 
@@ -157,10 +156,6 @@ public class CapgoWatchPlugin extends Plugin {
         } catch (JSONException e) {
             pending.call.reject("Failed to parse watch reply: " + e.getMessage(), e);
         }
-    }
-
-    private void replayStoredEvents() {
-        replayStoredEventsFor(null);
     }
 
     private void replayStoredEventsFor(final String eventName) {

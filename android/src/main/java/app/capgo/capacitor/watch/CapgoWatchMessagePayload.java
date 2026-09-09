@@ -25,6 +25,10 @@ public final class CapgoWatchMessagePayload {
             return false;
         }
         try {
+            final Object callbackId = json.get("callbackId");
+            if (!(callbackId instanceof String) || ((String) callbackId).isEmpty()) {
+                return false;
+            }
             return json.get("data") instanceof JSONObject;
         } catch (JSONException e) {
             return false;
