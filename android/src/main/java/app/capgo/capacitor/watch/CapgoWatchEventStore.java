@@ -194,16 +194,52 @@ public class CapgoWatchEventStore {
         synchronized (STORE_LOCK) {
             final JSONObject pending = readPendingRepliesObject();
             try {
+                prunePendingRepliesUnlocked(pending);
                 final JSONObject entry = new JSONObject();
                 entry.put("nodeId", nodeId);
                 entry.put("createdAt", System.currentTimeMillis());
                 pending.put(callbackId, entry);
+                prunePendingRepliesUnlocked(pending);
                 if (!preferences.edit().putString(KEY_PENDING_REPLIES, pending.toString()).commit()) {
                     Log.w(TAG, "Failed to commit pending reply for " + callbackId);
                 }
             } catch (JSONException e) {
                 Log.e(TAG, "Failed to persist pending reply for " + callbackId, e);
             }
+        }
+    }
+
+    private void prunePendingRepliesUnlocked(final JSONObject pending) {
+        final long now = System.currentTimeMillis();
+        final List<String> expired = new ArrayList<>();
+        final Iterator<String> keys = pending.keys();
+        while (keys.hasNext()) {
+            final String key = keys.next();
+            final JSONObject entry = pending.optJSONObject(key);
+            if (entry == null || now - entry.optLong("createdAt", now) > CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS) {
+                expired.add(key);
+            }
+        }
+        for (final String key : expired) {
+            pending.remove(key);
+        }
+        while (pending.length() > CapgoWatchConstants.MAX_PENDING_REPLIES) {
+            String oldestKey = null;
+            long oldestAt = Long.MAX_VALUE;
+            final Iterator<String> iter = pending.keys();
+            while (iter.hasNext()) {
+                final String key = iter.next();
+                final JSONObject entry = pending.optJSONObject(key);
+                final long createdAt = entry != null ? entry.optLong("createdAt", now) : now;
+                if (createdAt < oldestAt) {
+                    oldestAt = createdAt;
+                    oldestKey = key;
+                }
+            }
+            if (oldestKey == null) {
+                break;
+            }
+            pending.remove(oldestKey);
         }
     }
 

@@ -35,7 +35,9 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private static final String TAG = "CapgoWatchListenerSvc";
 
     private static final long LOCAL_NODE_RETRY_MS = 1_000L;
+    private static final long LOCAL_NODE_LONG_RETRY_MS = 60_000L;
     private static final int LOCAL_NODE_MAX_RETRIES = 5;
+    private static final int MAX_PENDING_DATA_EVENTS = 100;
 
     private CapgoWatchEventStore eventStore;
     private volatile String localNodeId;
@@ -44,6 +46,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
     private List<Uri> pendingPersistedUris;
     private List<Uri> inFlightPersistedUris;
     private final AtomicBoolean resolvingLocalNode = new AtomicBoolean(false);
+    private final AtomicBoolean drainInProgress = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private int localNodeRetryAttempts = 0;
 
@@ -120,42 +123,58 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
         localNodeId = nodeId;
         localNodeRetryAttempts = 0;
         resolvingLocalNode.set(false);
-        final List<DataEvent> pending;
-        synchronized (pendingDataLock) {
-            pending = pendingDataEvents;
-            pendingDataEvents = null;
+        if (!drainInProgress.compareAndSet(false, true)) {
+            return;
         }
-        if (pending != null && !pending.isEmpty()) {
-            processDataEvents(pending, nodeId);
+        try {
+            final List<DataEvent> pending;
+            final List<Uri> persisted;
             synchronized (pendingDataLock) {
-                for (final DataEvent event : pending) {
-                    final Uri uri = event.getDataItem().getUri();
-                    if (uri != null) {
-                        removePendingUriLocked(uri);
-                    }
-                }
-                persistPendingUrisLocked();
-            }
-        }
-        // Claim durable URIs so a concurrent onLocalNodeResolved cannot double-fetch.
-        final List<Uri> persisted;
-        synchronized (pendingDataLock) {
-            persisted = pendingPersistedUris == null ? new ArrayList<>() : new ArrayList<>(pendingPersistedUris);
-            if (!persisted.isEmpty()) {
+                pending = pendingDataEvents;
+                pendingDataEvents = null;
+                // Claim durable URIs atomically with the pending-event drain.
+                persisted = pendingPersistedUris == null ? new ArrayList<>() : new ArrayList<>(pendingPersistedUris);
                 pendingPersistedUris = null;
-                if (inFlightPersistedUris == null) {
-                    inFlightPersistedUris = new ArrayList<>();
+                if (!persisted.isEmpty()) {
+                    if (inFlightPersistedUris == null) {
+                        inFlightPersistedUris = new ArrayList<>();
+                    }
+                    for (final Uri uri : persisted) {
+                        if (!inFlightPersistedUris.contains(uri)) {
+                            inFlightPersistedUris.add(uri);
+                        }
+                    }
                 }
-                for (final Uri uri : persisted) {
-                    if (!inFlightPersistedUris.contains(uri)) {
-                        inFlightPersistedUris.add(uri);
+                // Pending-event URIs are processed from the frozen events; drop durable copies.
+                if (pending != null) {
+                    for (final DataEvent event : pending) {
+                        final Uri uri = event.getDataItem().getUri();
+                        if (uri != null) {
+                            removePendingUriLocked(uri);
+                        }
                     }
                 }
                 persistPendingUrisLocked();
             }
-        }
-        if (!persisted.isEmpty()) {
-            fetchAndProcessPersistedUris(persisted, nodeId, 0);
+            if (pending != null && !pending.isEmpty()) {
+                processDataEvents(pending, nodeId);
+            }
+            if (!persisted.isEmpty()) {
+                // Skip URIs already handled via frozen pending events.
+                final List<Uri> toFetch = new ArrayList<>();
+                synchronized (pendingDataLock) {
+                    for (final Uri uri : persisted) {
+                        if (inFlightPersistedUris != null && inFlightPersistedUris.contains(uri)) {
+                            toFetch.add(uri);
+                        }
+                    }
+                }
+                if (!toFetch.isEmpty()) {
+                    fetchAndProcessPersistedUris(toFetch, nodeId, 0);
+                }
+            }
+        } finally {
+            drainInProgress.set(false);
         }
     }
 
@@ -164,29 +183,40 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             if (pendingDataEvents == null) {
                 pendingDataEvents = new ArrayList<>();
             }
-            pendingDataEvents.addAll(events);
             for (final DataEvent event : events) {
-                final Uri uri = event.getDataItem().getUri();
-                if (uri != null) {
-                    addPendingUriLocked(uri);
+                if (pendingDataEvents.size() >= MAX_PENDING_DATA_EVENTS) {
+                    Log.w(TAG, "Dropping pending data event; queue at capacity " + MAX_PENDING_DATA_EVENTS);
+                    break;
                 }
+                final Uri uri = event.getDataItem().getUri();
+                if (uri != null && !addPendingUriLocked(uri)) {
+                    continue;
+                }
+                pendingDataEvents.add(event);
             }
             // Persist on enqueue so process death before onDestroy cannot lose URIs.
             persistPendingUrisLocked();
         }
     }
 
-    private void addPendingUriLocked(final Uri uri) {
+    private boolean addPendingUriLocked(final Uri uri) {
         if (
             (pendingPersistedUris != null && pendingPersistedUris.contains(uri)) ||
             (inFlightPersistedUris != null && inFlightPersistedUris.contains(uri))
         ) {
-            return;
+            return true;
+        }
+        final int inFlightCount = inFlightPersistedUris == null ? 0 : inFlightPersistedUris.size();
+        final int pendingCount = pendingPersistedUris == null ? 0 : pendingPersistedUris.size();
+        if (pendingCount + inFlightCount >= MAX_PENDING_DATA_EVENTS) {
+            Log.w(TAG, "Rejecting pending data URI; durable queue at capacity " + MAX_PENDING_DATA_EVENTS);
+            return false;
         }
         if (pendingPersistedUris == null) {
             pendingPersistedUris = new ArrayList<>();
         }
         pendingPersistedUris.add(uri);
+        return true;
     }
 
     private void removePendingUriLocked(final Uri uri) {
@@ -235,10 +265,16 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                         TAG,
                         "Local node still unresolved after " +
                             localNodeRetryAttempts +
-                            " attempts; retrying while pending data events remain"
+                            " attempts; pausing rapid retries, scheduling long-interval retry"
                     );
+                    mainHandler.postDelayed(() -> {
+                        localNodeRetryAttempts = 0;
+                        resolveLocalNodeAndProcessPending();
+                    }, LOCAL_NODE_LONG_RETRY_MS);
+                    return;
                 }
-                mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, LOCAL_NODE_RETRY_MS);
+                final long delayMs = LOCAL_NODE_RETRY_MS * (1L << Math.min(localNodeRetryAttempts - 1, 4));
+                mainHandler.postDelayed(this::resolveLocalNodeAndProcessPending, delayMs);
             });
     }
 

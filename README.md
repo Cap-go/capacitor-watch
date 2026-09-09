@@ -554,7 +554,7 @@ Use this for time-sensitive, interactive communication.
 
 **Returns:** <code>Promise&lt;<a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
-**Since:** 8.2.0
+**Since:** 8.1.3
 
 --------------------
 
@@ -591,7 +591,7 @@ Prefer the overloads above when `expectsReply` is a boolean literal.
 
 **Returns:** <code>Promise&lt;void | <a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
-**Since:** 8.2.0
+**Since:** 8.1.3
 
 --------------------
 
@@ -678,7 +678,7 @@ Useful after app restart to restore watch-synced state without waiting for a new
 
 **Returns:** <code>Promise&lt;<a href="#receivedstate">ReceivedState</a>&gt;</code>
 
-**Since:** 8.2.0
+**Since:** 8.1.3
 
 --------------------
 
@@ -860,7 +860,7 @@ Options for sending a message to the watch.
 | Prop               | Type                                                          | Description                                                                                                                     | Default            | Since |
 | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
 | **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects).                       |                    |       |
-| **`expectsReply`** | <code>boolean</code>                                          | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). | <code>false</code> | 8.2.0 |
+| **`expectsReply`** | <code>boolean</code>                                          | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). | <code>false</code> | 8.1.3 |
 
 
 #### UpdateContextOptions

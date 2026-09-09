@@ -31,6 +31,10 @@ public final class CapgoWatchConstants {
     public static final int MAX_STORED_EVENTS_BYTES = 256 * 1024;
     /** Maximum age of a persisted watch event before eviction. */
     public static final long MAX_EVENT_RETENTION_MS = 24L * 60L * 60L * 1000L;
+    /** Maximum age of a persisted pending-reply record (matches reply TTL). */
+    public static final long MAX_PENDING_REPLY_AGE_MS = 5L * 60L * 1000L;
+    /** Maximum number of persisted pending-reply records. */
+    public static final int MAX_PENDING_REPLIES = 100;
 
     private CapgoWatchConstants() {}
 

@@ -27,6 +27,39 @@ public class CapgoWatchEventStoreTest {
     }
 
     @Test
+    public void appendEvictsByByteLimitWhileKeepingNewest() throws Exception {
+        final Context context = ApplicationProvider.getApplicationContext();
+        // Fewer than MAX_STORED_EVENTS, but each payload is large enough to exceed the byte cap.
+        final int count = 8;
+        final char[] filler = new char[CapgoWatchConstants.MAX_STORED_EVENTS_BYTES / 4];
+        java.util.Arrays.fill(filler, 'x');
+        final String blob = new String(filler);
+        for (int i = 0; i < count; i++) {
+            final JSObject payload = new JSObject();
+            payload.put("index", i);
+            payload.put("blob", blob);
+            store.append("messageReceived", payload);
+        }
+
+        final String rawEvents = context
+            .getSharedPreferences(CapgoWatchConstants.PREF_EVENT_STORE, Context.MODE_PRIVATE)
+            .getString("events", "[]");
+        final int bytes = rawEvents.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+        assertTrue(bytes <= CapgoWatchConstants.MAX_STORED_EVENTS_BYTES);
+
+        final var events = store.drainAll();
+        assertTrue(events.size() < count);
+        assertTrue(events.size() >= 1);
+        assertEquals(
+            count - 1,
+            events
+                .get(events.size() - 1)
+                .payload.getInteger("index")
+                .intValue()
+        );
+    }
+
+    @Test
     public void appendEvictsOldestEventsWhenOverCountLimit() {
         for (int i = 0; i < CapgoWatchConstants.MAX_STORED_EVENTS + 5; i++) {
             final JSObject payload = new JSObject();

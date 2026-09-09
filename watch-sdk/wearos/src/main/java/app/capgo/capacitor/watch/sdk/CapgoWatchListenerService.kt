@@ -29,6 +29,7 @@ class CapgoWatchListenerService : WearableListenerService() {
     private var pendingPersistedUris: MutableList<Uri>? = null
     private var inFlightPersistedUris: MutableList<Uri>? = null
     private val resolvingLocalNode = AtomicBoolean(false)
+    private val drainInProgress = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var localNodeRetryAttempts = 0
 
@@ -64,37 +65,45 @@ class CapgoWatchListenerService : WearableListenerService() {
         localNodeId = nodeId
         localNodeRetryAttempts = 0
         resolvingLocalNode.set(false)
-        val pending: List<DataEvent>?
-        synchronized(pendingDataLock) {
-            pending = pendingDataEvents
-            pendingDataEvents = null
+        if (!drainInProgress.compareAndSet(false, true)) {
+            return
         }
-        if (!pending.isNullOrEmpty()) {
-            processDataEvents(pending, nodeId)
+        try {
+            val pending: List<DataEvent>?
+            val persisted: List<Uri>
             synchronized(pendingDataLock) {
-                for (event in pending) {
+                pending = pendingDataEvents
+                pendingDataEvents = null
+                // Claim durable URIs atomically with the pending-event drain.
+                persisted = pendingPersistedUris?.toList() ?: emptyList()
+                pendingPersistedUris = null
+                if (persisted.isNotEmpty()) {
+                    val inFlight = inFlightPersistedUris ?: mutableListOf<Uri>().also { inFlightPersistedUris = it }
+                    for (uri in persisted) {
+                        if (inFlight.none { it == uri }) {
+                            inFlight.add(uri)
+                        }
+                    }
+                }
+                // Pending-event URIs are processed from frozen events; drop durable copies.
+                pending?.forEach { event ->
                     event.dataItem.uri?.let { removePendingUriLocked(it) }
                 }
                 persistPendingUrisLocked()
             }
-        }
-        // Claim durable URIs so a concurrent onLocalNodeResolved cannot double-fetch.
-        val persisted: List<Uri>
-        synchronized(pendingDataLock) {
-            persisted = pendingPersistedUris?.toList() ?: emptyList()
-            if (persisted.isNotEmpty()) {
-                pendingPersistedUris = null
-                val inFlight = inFlightPersistedUris ?: mutableListOf<Uri>().also { inFlightPersistedUris = it }
-                for (uri in persisted) {
-                    if (inFlight.none { it == uri }) {
-                        inFlight.add(uri)
-                    }
-                }
-                persistPendingUrisLocked()
+            if (!pending.isNullOrEmpty()) {
+                processDataEvents(pending, nodeId)
             }
-        }
-        if (persisted.isNotEmpty()) {
-            fetchAndProcessPersistedUris(persisted, nodeId)
+            if (persisted.isNotEmpty()) {
+                val toFetch = synchronized(pendingDataLock) {
+                    persisted.filter { uri -> inFlightPersistedUris?.any { it == uri } == true }
+                }
+                if (toFetch.isNotEmpty()) {
+                    fetchAndProcessPersistedUris(toFetch, nodeId)
+                }
+            }
+        } finally {
+            drainInProgress.set(false)
         }
     }
 
