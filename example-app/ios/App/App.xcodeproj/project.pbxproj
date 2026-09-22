@@ -19,6 +19,7 @@
 		E82F40C82F0D278C00C7E52A /* CapgoWatchSDK in Frameworks */ = {isa = PBXBuildFile; productRef = E82F40C72F0D278C00C7E52A /* CapgoWatchSDK */; };
 		E82F40CA2F0D27A200C7E52A /* CapgoWatchSDK in Frameworks */ = {isa = PBXBuildFile; productRef = E82F40C92F0D27A200C7E52A /* CapgoWatchSDK */; };
 		E8DE06642F0D172C004D79B7 /* Capacitor Watch App Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = E8DE065A2F0D172A004D79B7 /* Capacitor Watch App Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		273197E1870749B99DB92DA7 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3A8BF3FEB6462880C7EE76 /* SceneDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,10 +58,19 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		E8DE065A2F0D172A004D79B7 /* Capacitor Watch App Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Capacitor Watch App Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		7F3A8BF3FEB6462880C7EE76 /* SceneDelegate.swift */ = {isa = PBXFileReference; name = "SceneDelegate.swift"; path = "SceneDelegate.swift"; sourceTree = "<group>"; fileEncoding = 4; lastKnownFileType = sourcecode.swift; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		E8DE065B2F0D172A004D79B7 /* Capacitor Watch App Watch App */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = "Capacitor Watch App Watch App"; sourceTree = "<group>"; };
+		E8DE065B2F0D172A004D79B7 /* Capacitor Watch App Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "Capacitor Watch App Watch App";
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +126,7 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				7F3A8BF3FEB6462880C7EE76 /* SceneDelegate.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -248,6 +259,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				273197E1870749B99DB92DA7 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
