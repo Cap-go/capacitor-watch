@@ -497,6 +497,7 @@ object CapgoWearPaths {
 // CapgoWearListenerService.kt
 package com.example.app.wear // use your wear module package
 
+import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
@@ -522,14 +523,21 @@ class CapgoWearListenerService : WearableListenerService() {
 
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         dataEvents.forEach { event ->
-            val path = event.dataItem.uri.path ?: return@forEach
-            val map = DataMapItem.fromDataItem(event.dataItem).dataMap
+            if (event.type != DataEvent.TYPE_CHANGED) return@forEach
+            val dataItem = event.dataItem
+            val path = dataItem.uri.path ?: return@forEach
+            val map = DataMapItem.fromDataItem(dataItem).dataMap
             val payload = JSONObject(map.getString(CapgoWearPaths.PAYLOAD_KEY, "{}"))
             when {
                 path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
                 path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
                     handleUserInfoFromPhone(payload)
-                    Wearable.getDataClient(this).deleteDataItems(event.dataItem.uri)
+                    // Ack only remote items; skip deletes for locally created user-info items
+                    val localId = com.google.android.gms.tasks.Tasks
+                        .await(Wearable.getNodeClient(this).localNode).id
+                    if (dataItem.uri.host != localId) {
+                        Wearable.getDataClient(this).deleteDataItems(dataItem.uri)
+                    }
                 }
             }
         }
@@ -545,7 +553,7 @@ class CapgoWearListenerService : WearableListenerService() {
 **Send a one-way message to the phone** (watch → phone):
 
 ```kotlin
-suspend fun sendToPhone(data: JSONObject) {
+suspend fun sendToPhone(context: android.content.Context, data: JSONObject) {
     val nodeClient = Wearable.getNodeClient(context)
     val messageClient = Wearable.getMessageClient(context)
     val nodes = nodeClient.connectedNodes.await()
@@ -559,7 +567,7 @@ suspend fun sendToPhone(data: JSONObject) {
 **Request a reply from the phone** (watch → phone, phone uses `replyToMessage`):
 
 ```kotlin
-suspend fun requestFromPhone(data: JSONObject) {
+suspend fun requestFromPhone(context: android.content.Context, data: JSONObject) {
     val messageClient = Wearable.getMessageClient(context)
     val nodes = Wearable.getNodeClient(context).connectedNodes.await()
     val payload = data.toString().toByteArray(Charsets.UTF_8)
@@ -574,14 +582,14 @@ suspend fun requestFromPhone(data: JSONObject) {
 **Push application context or user info to the phone** (same paths the plugin uses):
 
 ```kotlin
-suspend fun syncContextToPhone(data: JSONObject) {
+suspend fun syncContextToPhone(context: android.content.Context, data: JSONObject) {
     val request = com.google.android.gms.wearable.PutDataMapRequest.create(CapgoWearPaths.CONTEXT)
     request.dataMap.putString(CapgoWearPaths.PAYLOAD_KEY, data.toString())
     request.setUrgent()
     Wearable.getDataClient(context).putDataItem(request.asPutDataRequest()).await()
 }
 
-suspend fun transferUserInfoToPhone(data: JSONObject) {
+suspend fun transferUserInfoToPhone(context: android.content.Context, data: JSONObject) {
     val path = CapgoWearPaths.USER_INFO_PREFIX + java.util.UUID.randomUUID()
     val request = com.google.android.gms.wearable.PutDataMapRequest.create(path)
     request.dataMap.putString(CapgoWearPaths.PAYLOAD_KEY, data.toString())
@@ -594,7 +602,7 @@ Use `kotlinx.coroutines.tasks.await` or `Tasks.await` on a background thread for
 
 ### Step 6: Phone-side TypeScript (Capacitor)
 
-The same API as iOS. Import from `@capgo/capacitor-watch` in your Capacitor web code:
+Use the same TypeScript import and methods as on iOS for messaging and context sync. Android does not emit `reachabilityChanged` or `activationStateChanged`. Import from `@capgo/capacitor-watch` in your Capacitor web code:
 
 ```typescript
 import { Watch } from '@capgo/capacitor-watch';
@@ -652,7 +660,7 @@ export async function syncState(context: Record<string, unknown>) {
 
 - Use **adb** to verify nodes: `adb shell dumpsys activity service com.google.android.gms/.wearable.node.service.NodeService`
 - If messages do not arrive, confirm **matching applicationId**, both apps installed, and paths exactly `/capgo/...` as in the table above.
-- For emulator networking issues, try `adb forward` between phone and wear emulator ports per [Android Wear emulator docs](https://developer.android.com/training/wearables/get-started/standalone-apps).
+- For emulator pairing, use Android Studio **Device Manager** and **Wear OS Pairing** as in [Connect your phone](https://developer.android.com/training/wearables/get-started/connect-phone) and the [Wear OS emulator guide](https://developer.android.com/training/wearables/get-started/emulator).
 - Remember **iOS-only** events: use `getInfo()` on Android instead of `reachabilityChanged` / `activationStateChanged`.
 
 ---
@@ -1112,7 +1120,7 @@ Information about Watch / Wear OS connectivity status.
 | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`isSupported`**         | <code>boolean</code> | Whether the watch communication API is supported on this device. - iOS: false on iPad; true on iPhone when WatchConnectivity is available. - Android: true when Google Play Services with Wear OS support is available; false otherwise. - Web: always false. |
 | **`isPaired`**            | <code>boolean</code> | Whether a watch is currently paired/connected. - iOS: whether an Apple Watch is paired with this iPhone. - Android: whether at least one Wear OS node is currently connected.                                                                                 |
-| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one connected Wear OS node is reachable (used as a proxy).                                                   |
+| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one Wear OS node advertises the `capgo_watch` capability (`CapabilityClient.getCapability`).                 |
 | **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                                                                                                                                                                                             |
 | **`activationState`**     | <code>number</code>  | The current session activation state. - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState). - Android: 2 when a Wear OS node is connected, 0 otherwise.                                                                            |
 
@@ -1194,9 +1202,7 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{
- [P in K]: T;
- }</code>
+<code>{ [P in K]: T; }</code>
 
 </docgen-api>
 
