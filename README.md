@@ -235,7 +235,7 @@ Right now, your main app is missing the CapgoWatchSDK. We need to add it to the 
 
 <img src="./docs/add_framework_2.png" alt="Add framework" width="600">
 
-### Step 6: Configure the Watch App
+### Step 7: Configure the Watch App
 
 Update your watch app's main file to initialize the connection:
 
@@ -304,7 +304,7 @@ Your watch app structure should look like this:
 
 <img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-sources-added.png" alt="Watch sources added" width="300">
 
-### Step 7: Add Watch App Capabilities
+### Step 8: Add Watch App Capabilities
 
 The watch app also needs background capabilities:
 
@@ -316,7 +316,7 @@ The watch app also needs background capabilities:
 
 <img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-remote-not.png" alt="Watch remote notifications capability" width="300">
 
-### Step 8: Use the Plugin in Your Capacitor App
+### Step 9: Use the Plugin in Your Capacitor App
 
 Now set up the JavaScript side in your Capacitor app:
 
@@ -371,7 +371,7 @@ async function queueDataForWatch(data: Record<string, unknown>) {
 }
 ```
 
-### Step 9: Build and Run
+### Step 10: Build and Run
 
 Use the target dropdown in Xcode to switch between building for your phone or watch:
 
@@ -1194,7 +1194,9 @@ Values must be serializable (string, number, boolean, arrays, or nested objects)
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{
+ [P in K]: T;
+ }</code>
 
 </docgen-api>
 
