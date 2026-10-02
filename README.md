@@ -531,12 +531,20 @@ class CapgoWearListenerService : WearableListenerService() {
             when {
                 path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
                 path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
+                    val localId = try {
+                        com.google.android.gms.tasks.Tasks
+                            .await(Wearable.getNodeClient(this).localNode).id
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
+                    if (dataItem.uri.host == localId) return@forEach
                     handleUserInfoFromPhone(payload)
-                    // Ack only remote items; skip deletes for locally created user-info items
-                    val localId = com.google.android.gms.tasks.Tasks
-                        .await(Wearable.getNodeClient(this).localNode).id
-                    if (dataItem.uri.host != localId) {
-                        Wearable.getDataClient(this).deleteDataItems(dataItem.uri)
+                    try {
+                        com.google.android.gms.tasks.Tasks.await(
+                            Wearable.getDataClient(this).deleteDataItems(dataItem.uri)
+                        )
+                    } catch (_: Exception) {
+                        // Deletion failed; item may be redelivered. Retry delete or use WorkManager.
                     }
                 }
             }
