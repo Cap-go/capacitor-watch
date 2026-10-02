@@ -33,7 +33,6 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          filter: blob:none
           persist-credentials: false
           token: '${{ secrets.PERSONAL_ACCESS_TOKEN }}'
       - uses: oven-sh/setup-bun@v2
