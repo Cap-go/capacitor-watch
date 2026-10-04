@@ -1,5 +1,6 @@
 package app.capgo.capacitor.watch;
 
+import android.util.Log;
 import com.getcapacitor.JSObject;
 import java.lang.ref.WeakReference;
 
@@ -7,6 +8,8 @@ import java.lang.ref.WeakReference;
  * Bridges watch events between the WearableListenerService and the active plugin instance.
  */
 public final class CapgoWatchEventBridge {
+
+    private static final String TAG = "CapgoWatchEventBridge";
 
     private static volatile WeakReference<CapgoWatchPlugin> pluginRef = new WeakReference<>(null);
     private static volatile CapgoWatchEventStore eventStore;
@@ -58,6 +61,16 @@ public final class CapgoWatchEventBridge {
         }
 
         if (eventStore != null) {
+            if ("messageReceivedWithReply".equals(eventName) && replyNodeId != null && !replyNodeId.isEmpty()) {
+                final String callbackId = payload.getString("callbackId", null);
+                if (callbackId == null || !eventStore.hasPendingReply(callbackId)) {
+                    Log.w(
+                        TAG,
+                        "Skipping queue of messageReceivedWithReply without durable pending reply callbackId=" + callbackId
+                    );
+                    return;
+                }
+            }
             eventStore.append(eventName, payload, replyNodeId);
 
             final CapgoWatchPlugin pluginAfterAppend = pluginRef.get();

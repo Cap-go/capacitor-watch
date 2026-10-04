@@ -274,6 +274,25 @@ public class CapgoWatchEventStore {
         }
     }
 
+    /** True when a non-expired pending-reply record exists for {@code callbackId}. */
+    public boolean hasPendingReply(final String callbackId) {
+        synchronized (STORE_LOCK) {
+            final JSONObject pending = readPendingRepliesObject();
+            pruneExpiredPendingRepliesUnlocked(pending);
+            if (!pending.has(callbackId)) {
+                return false;
+            }
+            try {
+                final JSONObject entry = pending.getJSONObject(callbackId);
+                final long createdAt = entry.getLong("createdAt");
+                return System.currentTimeMillis() - createdAt <= CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS;
+            } catch (JSONException e) {
+                Log.w(TAG, "Unreadable pending reply for " + callbackId, e);
+                return false;
+            }
+        }
+    }
+
     public void saveLastContext(final JSObject context) {
         synchronized (STORE_LOCK) {
             preferences.edit().putString(CapgoWatchConstants.PREF_LAST_CONTEXT, context.toString()).commit();
