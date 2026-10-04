@@ -64,10 +64,7 @@ public final class CapgoWatchEventBridge {
             if ("messageReceivedWithReply".equals(eventName) && replyNodeId != null && !replyNodeId.isEmpty()) {
                 final String callbackId = payload.getString("callbackId", null);
                 if (callbackId == null || !eventStore.hasPendingReply(callbackId)) {
-                    Log.w(
-                        TAG,
-                        "Skipping queue of messageReceivedWithReply without durable pending reply callbackId=" + callbackId
-                    );
+                    Log.w(TAG, "Skipping queue of messageReceivedWithReply without durable pending reply callbackId=" + callbackId);
                     return;
                 }
             }
