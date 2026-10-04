@@ -849,7 +849,7 @@ Options for sending a message that expects a reply from the watch.
 
 | Prop               | Type                                                          | Description                                                                                                                     |
 | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects).                       |
+| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.                               |
 | **`expectsReply`** | <code>true</code>                                             | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). |
 
 

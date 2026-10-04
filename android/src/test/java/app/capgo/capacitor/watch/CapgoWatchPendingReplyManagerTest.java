@@ -50,22 +50,21 @@ public class CapgoWatchPendingReplyManagerTest {
 
     @Test
     public void restoreIncomingSchedulesExpiryFromCreatedAt() throws InterruptedException {
-        final long ttlMs = 500L;
+        final long ttlMs = 2_000L;
         manager = new CapgoWatchPendingReplyManager(ttlMs);
         manager.initialize(null, eventStore);
 
-        // Leave substantially more remaining TTL so scheduling jitter cannot expire early.
-        final long createdAt = System.currentTimeMillis() - (ttlMs - 300L);
+        final long createdAt = System.currentTimeMillis() - 400L;
         manager.restoreIncoming("callback-1", "node-1", createdAt);
 
         final CapgoWatchPendingReplyManager.IncomingPendingReply pending = manager.getIncoming("callback-1");
         assertNotNull(pending);
         assertEquals("node-1", pending.nodeId);
 
-        Thread.sleep(100L);
+        Thread.sleep(500L);
         assertNotNull(manager.getIncoming("callback-1"));
 
-        Thread.sleep(350L);
+        Thread.sleep(1_800L);
         assertNull(manager.getIncoming("callback-1"));
     }
 

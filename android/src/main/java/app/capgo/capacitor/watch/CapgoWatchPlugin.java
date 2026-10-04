@@ -24,7 +24,6 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -52,7 +51,6 @@ public class CapgoWatchPlugin extends Plugin {
     private CapgoWatchEventStore eventStore;
 
     private String watchCapability = CapgoWatchConstants.DEFAULT_CAPABILITY;
-    private final AtomicBoolean lastReachable = new AtomicBoolean(false);
 
     private final CapabilityClient.OnCapabilityChangedListener capabilityChangedListener = (info) -> refreshReachability();
 
@@ -196,8 +194,6 @@ public class CapgoWatchPlugin extends Plugin {
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
-                // Forward every observation (including initial unreachable); bridge dedupes.
-                lastReachable.set(isReachable);
                 CapgoWatchEventBridge.dispatchReachability(isReachable);
             } catch (ExecutionException | InterruptedException e) {
                 Log.w(TAG, "Failed to determine reachability", e);
@@ -354,12 +350,13 @@ public class CapgoWatchPlugin extends Plugin {
             call.reject("Watch plugin destroyed");
             return;
         }
-        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = manager.claimIncoming(callbackId);
+        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = manager.getIncoming(callbackId);
         if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;
         }
         if (System.currentTimeMillis() - pendingReply.createdAt > PENDING_REPLY_TTL_MS) {
+            manager.claimIncoming(callbackId);
             call.reject("Pending reply expired for callbackId: " + callbackId);
             return;
         }
@@ -370,6 +367,7 @@ public class CapgoWatchPlugin extends Plugin {
         executor.execute(() -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
+                manager.claimIncoming(callbackId);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 call.reject("Failed to send reply: " + e.getMessage(), e);

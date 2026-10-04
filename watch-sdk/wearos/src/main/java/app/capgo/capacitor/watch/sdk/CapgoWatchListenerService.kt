@@ -459,6 +459,7 @@ class CapgoWatchListenerService : WearableListenerService() {
                     }
                     val data = envelope.optJSONObject("data")
                     val message = if (data == null) emptyMap() else CapgoWatchJson.objectToMap(data)
+                    rememberReplySourceNode(callbackId, event.sourceNodeId)
                     dispatch { it.onMessageReceivedWithReply(message, callbackId) }
                 }
             }
@@ -494,9 +495,18 @@ class CapgoWatchListenerService : WearableListenerService() {
         private const val PREFS_NAME = "capgo_watch_sdk"
         private const val PREF_PENDING_DATA_URIS = "pending_data_uris"
         private val pendingReplies = ConcurrentHashMap<String, CompletableDeferred<ByteArray>>()
+        private val replySourceNodeByCallbackId = ConcurrentHashMap<String, String>()
 
         @Volatile
         var registeredListener: CapgoWatchListener? = null
+
+        fun rememberReplySourceNode(callbackId: String, nodeId: String) {
+            replySourceNodeByCallbackId[callbackId] = nodeId
+        }
+
+        fun consumeReplySourceNodeId(callbackId: String): String? {
+            return replySourceNodeByCallbackId.remove(callbackId)
+        }
 
         fun registerPendingReply(callbackId: String): CompletableDeferred<ByteArray> {
             return pendingReplies.getOrPut(callbackId) { CompletableDeferred() }

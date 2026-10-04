@@ -47,7 +47,12 @@ public final class CapgoWatchEventBridge {
         dispatch(eventName, payload, retainUntilConsumed, null);
     }
 
-    public static void dispatch(
+    private static final Object REACHABILITY_DISPATCH_LOCK = new Object();
+
+    /**
+     * @return {@code true} when the event was delivered live or persisted successfully
+     */
+    public static boolean dispatch(
         final String eventName,
         final JSObject payload,
         final boolean retainUntilConsumed,
@@ -57,29 +62,46 @@ public final class CapgoWatchEventBridge {
 
         if (plugin != null && plugin.hasWatchListeners(eventName)) {
             plugin.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
-            return;
+            return true;
         }
 
-        if (eventStore != null) {
-            if ("messageReceivedWithReply".equals(eventName) && replyNodeId != null && !replyNodeId.isEmpty()) {
-                final String callbackId = payload.getString("callbackId", null);
-                if (callbackId == null || !eventStore.hasPendingReply(callbackId)) {
-                    Log.w(TAG, "Skipping queue of messageReceivedWithReply without durable pending reply callbackId=" + callbackId);
-                    return;
-                }
-            }
-            eventStore.append(eventName, payload, replyNodeId);
+        if (eventStore == null) {
+            return false;
+        }
 
-            final CapgoWatchPlugin pluginAfterAppend = pluginRef.get();
-            if (pluginAfterAppend != null && pluginAfterAppend.hasWatchListeners(eventName)) {
-                for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainEventsFor(eventName)) {
-                    pluginAfterAppend.dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, retainUntilConsumed);
-                }
+        if ("messageReceivedWithReply".equals(eventName) && replyNodeId != null && !replyNodeId.isEmpty()) {
+            final String callbackId = payload.getString("callbackId", null);
+            if (callbackId == null || !eventStore.hasPendingReply(callbackId)) {
+                Log.w(TAG, "Skipping queue of messageReceivedWithReply without durable pending reply callbackId=" + callbackId);
+                return false;
             }
         }
+
+        if (!eventStore.append(eventName, payload, replyNodeId)) {
+            final CapgoWatchPlugin pluginAfterFailedAppend = pluginRef.get();
+            if (pluginAfterFailedAppend != null && pluginAfterFailedAppend.hasWatchListeners(eventName)) {
+                pluginAfterFailedAppend.dispatchWatchEvent(eventName, payload, retainUntilConsumed);
+                return true;
+            }
+            return false;
+        }
+
+        final CapgoWatchPlugin pluginAfterAppend = pluginRef.get();
+        if (pluginAfterAppend != null && pluginAfterAppend.hasWatchListeners(eventName)) {
+            for (final CapgoWatchEventStore.StoredEvent storedEvent : eventStore.drainEventsFor(eventName)) {
+                pluginAfterAppend.dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, retainUntilConsumed);
+            }
+        }
+        return true;
     }
 
     public static void dispatchReachability(final boolean isReachable) {
+        synchronized (REACHABILITY_DISPATCH_LOCK) {
+            dispatchReachabilityUnlocked(isReachable);
+        }
+    }
+
+    private static void dispatchReachabilityUnlocked(final boolean isReachable) {
         final JSObject evt = new JSObject();
         evt.put("isReachable", isReachable);
 
@@ -87,27 +109,18 @@ public final class CapgoWatchEventBridge {
             final CapgoWatchPlugin plugin = pluginRef.get();
             final boolean live = plugin != null && plugin.hasWatchListeners("reachabilityChanged");
             if (live) {
-                // Live listeners: preference-based change detection.
                 if (!eventStore.saveLastReachableIfChanged(isReachable)) {
                     return;
                 }
-                // Recheck after PREF write — plugin may have been destroyed in between.
                 final CapgoWatchPlugin pluginNow = pluginRef.get();
                 if (pluginNow != null && pluginNow.hasWatchListeners("reachabilityChanged")) {
                     pluginNow.dispatchWatchEvent("reachabilityChanged", evt, true);
-                } else {
-                    // Queue so a later listener still receives the transition.
-                    // Roll back PREF on commit failure so a later callback can retry.
-                    if (!eventStore.append("reachabilityChanged", evt, null)) {
-                        // Only roll back if PREF still reflects this failed transition.
-                        eventStore.clearLastReachableIf(isReachable);
-                    }
+                } else if (!eventStore.append("reachabilityChanged", evt, null)) {
+                    eventStore.clearLastReachableIf(isReachable);
                 }
                 return;
             }
 
-            // Background queue: check + append must be atomic so overlapping callbacks
-            // cannot both pass hasQueuedReachability before either persists.
             if (!eventStore.appendReachabilityIfAbsent(isReachable, evt)) {
                 return;
             }

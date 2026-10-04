@@ -247,8 +247,8 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         replyHandler?([:])
     }
 
-    func notifyWatchEvent(_ eventName: String, data: [String: Any]) {
-        notifyListeners(eventName, data: data, retainUntilConsumed: true)
+    func notifyWatchEvent(_ eventName: String, data: [String: Any], retainUntilConsumed: Bool = true) {
+        notifyListeners(eventName, data: data, retainUntilConsumed: retainUntilConsumed)
     }
 
     deinit {
@@ -328,7 +328,7 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
         plugin?.notifyWatchEvent("messageReceivedWithReply", data: [
             "message": CapgoWatchMessageConverter.convertFromWatchMessage(message),
             "callbackId": callbackId
-        ])
+        ], retainUntilConsumed: false)
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

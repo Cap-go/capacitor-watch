@@ -474,13 +474,14 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
             } else {
                 final JSObject evt = new JSObject();
                 evt.put("userInfo", data);
-                CapgoWatchEventBridge.dispatch("userInfoReceived", evt, true);
-                Wearable.getDataClient(this).deleteDataItems(itemUri);
+                if (CapgoWatchEventBridge.dispatch("userInfoReceived", evt, true)) {
+                    Wearable.getDataClient(this).deleteDataItems(itemUri);
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "Error processing data change", e);
             if (isUserInfo) {
-                Wearable.getDataClient(this).deleteDataItems(itemUri);
+                Log.w(TAG, "Leaving userInfo DataItem after failed dispatch/persist: " + itemUri);
             }
         }
     }

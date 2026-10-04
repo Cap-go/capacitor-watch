@@ -2,6 +2,11 @@
 
 Kotlin SDK for Wear OS companion apps that communicate with `@capgo/capacitor-watch` on the phone.
 
+## Requirements
+
+- JDK 21 for compiling this SDK and Wear apps that depend on it
+- Wear module `minSdk` 26 or higher (matches this library)
+
 ## Include in your Wear module
 
 1. Copy or reference the `watch-sdk/wearos` directory from this repository.

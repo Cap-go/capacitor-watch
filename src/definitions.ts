@@ -38,8 +38,7 @@ export interface SendMessageOptions {
  */
 export interface SendMessageOptionsWithReply extends SendMessageOptions {
   /**
-   * The data to send to the watch.
-   * Must be serializable (string, number, boolean, arrays, or nested objects).
+   * Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.
    */
   data: WatchMessageData;
   expectsReply: true;

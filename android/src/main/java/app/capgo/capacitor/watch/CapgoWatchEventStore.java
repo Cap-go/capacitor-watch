@@ -323,12 +323,6 @@ public class CapgoWatchEventStore {
     /**
      * True when a retained queued reachabilityChanged event already has this value.
      */
-    public boolean hasQueuedReachability(final boolean isReachable) {
-        synchronized (STORE_LOCK) {
-            return hasQueuedReachabilityUnlocked(isReachable);
-        }
-    }
-
     private boolean hasQueuedReachabilityUnlocked(final boolean isReachable) {
         final JSONArray events = readEventsArray();
         final long now = System.currentTimeMillis();
