@@ -85,7 +85,7 @@ export interface WatchInfo {
   /**
    * Whether the watch companion app is installed.
    * - iOS: whether the paired Apple Watch has the companion app installed.
-   * - Android: whether at least one Wear OS node advertises the `capgo_watch` capability (`CapabilityClient.getCapability`).
+   * - Android: whether at least one connected Wear OS node is reachable (used as a proxy).
    */
   isWatchAppInstalled: boolean;
   /**

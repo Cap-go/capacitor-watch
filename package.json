@@ -1,7 +1,7 @@
 {
   "name": "@capgo/capacitor-watch",
   "version": "8.1.7",
-  "description": "Capacitor plugin for Apple Watch and Wear OS communication with bidirectional messaging support",
+  "description": "Capacitor plugin for Apple Watch communication with bidirectional messaging support",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
@@ -33,13 +33,7 @@
     "watch",
     "apple-watch",
     "watchkit",
-    "watchconnectivity",
-    "wear-os",
-    "wearos",
-    "android-wear",
-    "wearable",
-    "smartwatch",
-    "data-layer"
+    "watchconnectivity"
   ],
   "scripts": {
     "verify": "npm run verify:ios && npm run verify:android && npm run verify:web",

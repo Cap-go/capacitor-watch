@@ -146,14 +146,13 @@ Your capabilities should look like this when complete:
 
 ### Step 3: Configure AppDelegate.swift
 
-> [!NOTE] 
-> For now this will not compile. This is fine, we will fix in later steps
+The Capacitor plugin owns WatchConnectivity on the phone: when `@capgo/capacitor-watch` loads, it sets the `WCSession` delegate and calls `activate()`. **Do not** assign `WCSession.default.delegate` or call `activate()` in your iOS app; doing so can break plugin messaging.
+
+Your phone app's `AppDelegate` only needs the usual Capacitor setup (no WatchConnectivity imports or session code):
 
 ```swift
 import UIKit
 import Capacitor
-import WatchConnectivity
-import CapgoWatchSDK
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -161,11 +160,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Initialize WatchConnectivity session
-        if WCSession.isSupported() {
-            WCSession.default.delegate = CapWatchSessionDelegate.shared
-            WCSession.default.activate()
-        }
         return true
     }
 
