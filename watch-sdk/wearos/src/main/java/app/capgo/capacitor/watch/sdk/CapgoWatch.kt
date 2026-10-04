@@ -78,7 +78,7 @@ class CapgoWatch private constructor(private val appContext: Context) {
     }
 
     suspend fun replyToMessage(callbackId: String, data: Map<String, Any?>) {
-        val targetNodeId = CapgoWatchListenerService.consumeReplySourceNodeId(callbackId)
+        val targetNodeId = CapgoWatchListenerService.getReplySourceNodeId(callbackId)
         val nodes = connectedPhoneNodes()
         if (nodes.isEmpty()) {
             throw IllegalStateException("No connected phone nodes found")
@@ -92,6 +92,7 @@ class CapgoWatch private constructor(private val appContext: Context) {
         val payload = JSONObject(data).toString().toByteArray()
         val replyPath = CapgoWatchPaths.PATH_REPLY + callbackId
         messageClient.sendMessage(nodeId, replyPath, payload).await()
+        CapgoWatchListenerService.clearReplySourceNodeId(callbackId)
     }
 
     private suspend fun connectedPhoneNodes(): List<Node> {

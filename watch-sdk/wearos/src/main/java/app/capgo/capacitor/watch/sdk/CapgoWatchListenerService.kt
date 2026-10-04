@@ -492,20 +492,50 @@ class CapgoWatchListenerService : WearableListenerService() {
         private const val LOCAL_NODE_MAX_RETRIES = 5
         private const val LOCAL_NODE_LONG_RETRY_MS = 60_000L
         private const val MAX_PENDING_DATA_EVENTS = 100
+        private const val MAX_REPLY_SOURCE_ROUTES = 100
+        private const val REPLY_SOURCE_TTL_MS = 5L * 60L * 1000L
         private const val PREFS_NAME = "capgo_watch_sdk"
         private const val PREF_PENDING_DATA_URIS = "pending_data_uris"
         private val pendingReplies = ConcurrentHashMap<String, CompletableDeferred<ByteArray>>()
         private val replySourceNodeByCallbackId = ConcurrentHashMap<String, String>()
+        private val replySourceExpiryTasks = ConcurrentHashMap<String, Runnable>()
+        private val replySourceExpiryHandler = Handler(Looper.getMainLooper())
 
         @Volatile
         var registeredListener: CapgoWatchListener? = null
 
         fun rememberReplySourceNode(callbackId: String, nodeId: String) {
+            if (!replySourceNodeByCallbackId.containsKey(callbackId) &&
+                replySourceNodeByCallbackId.size >= MAX_REPLY_SOURCE_ROUTES
+            ) {
+                Log.w(TAG, "Dropping reply source route; at capacity $MAX_REPLY_SOURCE_ROUTES")
+                return
+            }
             replySourceNodeByCallbackId[callbackId] = nodeId
+            scheduleReplySourceExpiry(callbackId)
         }
 
-        fun consumeReplySourceNodeId(callbackId: String): String? {
-            return replySourceNodeByCallbackId.remove(callbackId)
+        fun getReplySourceNodeId(callbackId: String): String? {
+            return replySourceNodeByCallbackId[callbackId]
+        }
+
+        fun clearReplySourceNodeId(callbackId: String) {
+            cancelReplySourceExpiry(callbackId)
+            replySourceNodeByCallbackId.remove(callbackId)
+        }
+
+        private fun scheduleReplySourceExpiry(callbackId: String) {
+            cancelReplySourceExpiry(callbackId)
+            val task = Runnable {
+                replySourceNodeByCallbackId.remove(callbackId)
+                replySourceExpiryTasks.remove(callbackId)
+            }
+            replySourceExpiryTasks[callbackId] = task
+            replySourceExpiryHandler.postDelayed(task, REPLY_SOURCE_TTL_MS)
+        }
+
+        private fun cancelReplySourceExpiry(callbackId: String) {
+            replySourceExpiryTasks.remove(callbackId)?.let { replySourceExpiryHandler.removeCallbacks(it) }
         }
 
         fun registerPendingReply(callbackId: String): CompletableDeferred<ByteArray> {

@@ -328,7 +328,7 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
         plugin?.notifyWatchEvent("messageReceivedWithReply", data: [
             "message": CapgoWatchMessageConverter.convertFromWatchMessage(message),
             "callbackId": callbackId
-        ], retainUntilConsumed: false)
+        ], retainUntilConsumed: true)
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
