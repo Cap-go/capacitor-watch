@@ -321,11 +321,11 @@ The watch app also needs background capabilities:
 Now set up the JavaScript side in your Capacitor app:
 
 ```typescript
-import { Watch } from '@capgo/capacitor-watch';
+import { CapgoWatch } from '@capgo/capacitor-watch';
 
 // Check watch connectivity status
 async function checkWatchStatus() {
-  const info = await Watch.getInfo();
+  const info = await CapgoWatch.getInfo();
   console.log('Watch supported:', info.isSupported);
   console.log('Watch paired:', info.isPaired);
   console.log('Watch app installed:', info.isWatchAppInstalled);
@@ -333,41 +333,41 @@ async function checkWatchStatus() {
 }
 
 // Listen for messages from watch
-Watch.addListener('messageReceived', (event) => {
+CapgoWatch.addListener('messageReceived', (event) => {
   console.log('Message from watch:', event.message);
   // Handle the message (e.g., event.message.action === 'buttonTapped')
 });
 
 // Listen for messages that need a reply
-Watch.addListener('messageReceivedWithReply', async (event) => {
+CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
   console.log('Watch asking:', event.message);
 
   // Send reply back to watch
-  await Watch.replyToMessage({
+  await CapgoWatch.replyToMessage({
     callbackId: event.callbackId,
     data: { response: 'acknowledged', processed: true }
   });
 });
 
 // Listen for connection changes
-Watch.addListener('reachabilityChanged', (event) => {
+CapgoWatch.addListener('reachabilityChanged', (event) => {
   console.log('Watch reachable:', event.isReachable);
   // Update UI to show connection status
 });
 
 // Send data to watch (latest value wins)
 async function updateWatchContext(data: Record<string, unknown>) {
-  await Watch.updateApplicationContext({ context: data });
+  await CapgoWatch.updateApplicationContext({ context: data });
 }
 
 // Send message to watch (requires watch to be reachable)
 async function sendMessageToWatch(data: Record<string, unknown>) {
-  await Watch.sendMessage({ data });
+  await CapgoWatch.sendMessage({ data });
 }
 
 // Queue data for reliable delivery (even when watch is offline)
 async function queueDataForWatch(data: Record<string, unknown>) {
-  await Watch.transferUserInfo({ userInfo: data });
+  await CapgoWatch.transferUserInfo({ userInfo: data });
 }
 ```
 
@@ -613,46 +613,46 @@ Use `kotlinx.coroutines.tasks.await` or `Tasks.await` on a background thread for
 Use the same TypeScript import and methods as on iOS for messaging and context sync. Android does not emit `reachabilityChanged` or `activationStateChanged`. Import from `@capgo/capacitor-watch` in your Capacitor web code:
 
 ```typescript
-import { Watch } from '@capgo/capacitor-watch';
+import { CapgoWatch } from '@capgo/capacitor-watch';
 
 export async function setupWearOsBridge() {
-  const info = await Watch.getInfo();
+  const info = await CapgoWatch.getInfo();
   console.log('Wear supported:', info.isSupported);
   console.log('Node connected:', info.isPaired);
   console.log('Watch app (capgo_watch):', info.isWatchAppInstalled);
 
-  Watch.addListener('messageReceived', (event) => {
+  CapgoWatch.addListener('messageReceived', (event) => {
     console.log('From watch:', event.message);
   });
 
-  Watch.addListener('messageReceivedWithReply', async (event) => {
-    await Watch.replyToMessage({
+  CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
+    await CapgoWatch.replyToMessage({
       callbackId: event.callbackId,
       data: { status: 'ok', echo: event.message },
     });
   });
 
-  Watch.addListener('applicationContextReceived', (event) => {
+  CapgoWatch.addListener('applicationContextReceived', (event) => {
     console.log('Context from watch:', event.context);
   });
 
-  Watch.addListener('userInfoReceived', (event) => {
+  CapgoWatch.addListener('userInfoReceived', (event) => {
     console.log('User info from watch:', event.userInfo);
   });
 
   // Android does not emit reachabilityChanged; poll when needed:
   setInterval(async () => {
-    const latest = await Watch.getInfo();
+    const latest = await CapgoWatch.getInfo();
     console.log('Reachable:', latest.isReachable);
   }, 5000);
 }
 
 export async function sendToWatch(data: Record<string, unknown>) {
-  await Watch.sendMessage({ data });
+  await CapgoWatch.sendMessage({ data });
 }
 
 export async function syncState(context: Record<string, unknown>) {
-  await Watch.updateApplicationContext({ context });
+  await CapgoWatch.updateApplicationContext({ context });
 }
 ```
 
@@ -686,30 +686,30 @@ Choose the right method for your use case (Apple Watch and Wear OS; see [platfor
 ### Example: Complete Communication Flow
 
 ```typescript
-import { Watch } from '@capgo/capacitor-watch';
+import { CapgoWatch } from '@capgo/capacitor-watch';
 
 class WatchService {
   private isReachable = false;
 
   async initialize() {
     // Check initial status
-    const info = await Watch.getInfo();
+    const info = await CapgoWatch.getInfo();
     this.isReachable = info.isReachable;
 
     // Monitor reachability
-    Watch.addListener('reachabilityChanged', (event) => {
+    CapgoWatch.addListener('reachabilityChanged', (event) => {
       this.isReachable = event.isReachable;
     });
 
     // Handle incoming messages
-    Watch.addListener('messageReceived', (event) => {
+    CapgoWatch.addListener('messageReceived', (event) => {
       this.handleWatchMessage(event.message);
     });
 
     // Handle request/reply messages
-    Watch.addListener('messageReceivedWithReply', async (event) => {
+    CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
       const reply = await this.processWatchRequest(event.message);
-      await Watch.replyToMessage({
+      await CapgoWatch.replyToMessage({
         callbackId: event.callbackId,
         data: reply
       });
@@ -718,16 +718,16 @@ class WatchService {
 
   async syncAppState(state: Record<string, unknown>) {
     // Always works - queues if watch is unreachable
-    await Watch.updateApplicationContext({ context: state });
+    await CapgoWatch.updateApplicationContext({ context: state });
   }
 
   async sendInteractiveMessage(data: Record<string, unknown>) {
     if (!this.isReachable) {
       console.log('Watch not reachable, queueing message');
-      await Watch.transferUserInfo({ userInfo: data });
+      await CapgoWatch.transferUserInfo({ userInfo: data });
       return;
     }
-    await Watch.sendMessage({ data });
+    await CapgoWatch.sendMessage({ data });
   }
 
   private handleWatchMessage(message: Record<string, unknown>) {
