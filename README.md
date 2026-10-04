@@ -686,6 +686,7 @@ Choose the right method for your use case (Apple Watch and Wear OS; see [platfor
 ### Example: Complete Communication Flow
 
 ```typescript
+import { Capacitor } from '@capacitor/core';
 import { CapgoWatch } from '@capgo/capacitor-watch';
 
 class WatchService {
@@ -696,10 +697,12 @@ class WatchService {
     const info = await CapgoWatch.getInfo();
     this.isReachable = info.isReachable;
 
-    // Monitor reachability
-    CapgoWatch.addListener('reachabilityChanged', (event) => {
-      this.isReachable = event.isReachable;
-    });
+    // iOS only: Android does not emit reachabilityChanged
+    if (Capacitor.getPlatform() === 'ios') {
+      CapgoWatch.addListener('reachabilityChanged', (event) => {
+        this.isReachable = event.isReachable;
+      });
+    }
 
     // Handle incoming messages
     CapgoWatch.addListener('messageReceived', (event) => {
@@ -722,12 +725,23 @@ class WatchService {
   }
 
   async sendInteractiveMessage(data: Record<string, unknown>) {
+    if (Capacitor.getPlatform() === 'android') {
+      const info = await CapgoWatch.getInfo();
+      this.isReachable = info.isReachable;
+    }
+
     if (!this.isReachable) {
       console.log('Watch not reachable, queueing message');
       await CapgoWatch.transferUserInfo({ userInfo: data });
       return;
     }
-    await CapgoWatch.sendMessage({ data });
+
+    try {
+      await CapgoWatch.sendMessage({ data });
+    } catch (error) {
+      console.log('sendMessage failed, queueing message', error);
+      await CapgoWatch.transferUserInfo({ userInfo: data });
+    }
   }
 
   private handleWatchMessage(message: Record<string, unknown>) {
