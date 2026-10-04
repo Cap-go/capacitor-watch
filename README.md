@@ -739,8 +739,17 @@ class WatchService {
     try {
       await CapgoWatch.sendMessage({ data });
     } catch (error) {
-      console.log('sendMessage failed, queueing message', error);
-      await CapgoWatch.transferUserInfo({ userInfo: data });
+      const message = error instanceof Error ? error.message : String(error);
+      // Queue only when send did not start (avoid duplicate delivery on partial multi-node sends)
+      const safeToQueue =
+        message.includes('No connected Wear OS devices') ||
+        message.includes('Watch is not reachable');
+      if (safeToQueue) {
+        console.log('Watch not reachable for sendMessage, queueing message');
+        await CapgoWatch.transferUserInfo({ userInfo: data });
+        return;
+      }
+      throw error;
     }
   }
 
