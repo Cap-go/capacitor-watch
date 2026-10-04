@@ -43,8 +43,8 @@ public final class CapgoWatchEventBridge {
         return true;
     }
 
-    public static void dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
-        dispatch(eventName, payload, retainUntilConsumed, null);
+    public static boolean dispatch(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
+        return dispatch(eventName, payload, retainUntilConsumed, null);
     }
 
     private static final Object REACHABILITY_DISPATCH_LOCK = new Object();
