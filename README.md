@@ -1,4 +1,7 @@
-# @capgo/capacitor-watch
+# Capacitor Watch: Apple Watch + Wear OS
+
+**`@capgo/capacitor-watch`**: Capacitor 8 plugin for bidirectional phone and watch messaging on **iOS (Apple Watch)** and **Android (Wear OS)**.
+
 <a href="https://capgo.app/"><img src="https://capgo.app/readme-banner.svg?repo=Cap-go/capacitor-watch" alt="Capgo - Instant updates for Capacitor" /></a>
 
 <div align="center">
@@ -6,20 +9,28 @@
   <h2><a href="https://capgo.app/consulting/?ref=plugin_watch"> Missing a feature? We'll build the plugin for you 💪</a></h2>
 </div>
 
-Apple Watch communication plugin for Capacitor with bidirectional messaging support.
+## Features
+
+- **Bidirectional messaging** between the phone app and a paired **Apple Watch** or **Wear OS** watch
+- **Request/reply** flows (`messageReceivedWithReply` + `replyToMessage`) on both native platforms
+- **Application context** sync with latest-value semantics (`updateApplicationContext` / `applicationContextReceived`)
+- **User info transfers** for queued delivery (`transferUserInfo` / `userInfoReceived`)
+- **Connectivity status** via `getInfo()` (pairing, reachability, companion app detection)
+- **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly)
+- **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android
 
 ## Why Capacitor Watch?
 
-The only Capacitor 8 compatible plugin for **bidirectional Apple Watch communication**:
+The Capacitor 8 plugin for **bidirectional watch communication on iOS and Android**:
 
-- **Two-way messaging** - Send and receive messages between iPhone and Apple Watch
+- **Two-way messaging** - Phone and Apple Watch (WatchConnectivity) and phone and Wear OS (Data Layer)
 - **Application context** - Sync app state with latest-value-only semantics
-- **User info transfers** - Reliable queued delivery even when watch is offline
-- **Request/Reply pattern** - Interactive workflows with callback-based responses
-- **SwiftUI ready** - Includes watch-side SDK with ObservableObject support
-- **iOS 15+** - Built for modern iOS with Swift Package Manager
+- **User info transfers** - Reliable queued delivery when the watch is not immediately reachable
+- **Request/reply pattern** - Interactive workflows with callback-based responses
+- **SwiftUI ready** - Includes watch-side SDK with ObservableObject support for Apple Watch
+- **Wear OS ready** - Documented Data Layer paths and capability name match the native Android implementation
 
-Essential for health apps, fitness trackers, remote controls, and any app extending to Apple Watch.
+Essential for health apps, fitness trackers, remote controls, and any Capacitor app that extends to Apple Watch or Wear OS.
 
 ## Documentation
 
@@ -59,14 +70,44 @@ npx cap sync
 
 ## Requirements
 
-- **iOS**: iOS 15.0+ (Capacitor 8 minimum). Requires WatchConnectivity capability.
-- **watchOS**: watchOS 9.0+. Requires companion app with CapgoWatchSDK.
-- **Android**: Not supported (Apple Watch is iOS-only). Methods return appropriate errors.
-- **Hardware**: Real Apple Watch required - simulators do not support WatchConnectivity.
+- **iOS**: iOS 15.0+ (Capacitor 8 minimum). WatchConnectivity capability on the iPhone app.
+- **watchOS**: watchOS 9.0+. Companion watch app with **CapgoWatchSDK** (see [Apple Watch setup guide](#apple-watch-setup-guide)).
+- **Android (phone)**: API **24+** (`minSdkVersion` 24 in the plugin `android/build.gradle`). **Google Play services** with Wear OS support. A **paired Wear OS** device or emulator with the companion watch module installed.
+- **Wear OS (watch module)**: Same **`applicationId`** as the phone app, signed with the same key. Gradle dependency `com.google.android.gms:play-services-wearable:18.2.0` (same version as the plugin). Advertise capability **`capgo_watch`** so `getInfo().isWatchAppInstalled` works.
+- **Hardware**: Real Apple Watch recommended for iOS (simulators do not support WatchConnectivity). Wear OS can be tested on emulators with phone + watch pairing.
+
+## Platform support
+
+Methods and events below reflect the current **iOS** (`CapgoWatchPlugin.swift`), **Android** (`CapgoWatchPlugin.java`), and **Web** (`web.ts`) implementations.
+
+| API | iOS / Apple Watch | Android / Wear OS | Web |
+| --- | --- | --- | --- |
+| `sendMessage` | Yes. Watch must be **reachable** (`WCSession.isReachable`). | Yes. Sends on MessageClient path `/capgo/message` to **all connected** nodes; rejects if none. Does not mirror iOS reachability checks before send. | Throws `unavailable` |
+| `updateApplicationContext` | Yes. `WCSession.updateApplicationContext`. | Yes. DataItem path `/capgo/context`, map key `payload` (JSON string). | Throws `unavailable` |
+| `transferUserInfo` | Yes. Queued `transferUserInfo`. | Yes. DataItem path `/capgo/userinfo/{uuid}`, map key `payload`. | Throws `unavailable` |
+| `replyToMessage` | Yes. Completes the WatchConnectivity reply handler. | Yes. MessageClient path `/capgo/reply/{callbackId}` to the originating node. Pending replies expire after **5 minutes**. | Throws `unavailable` |
+| `getInfo` | Yes. WCSession pairing, install, reachability, activation. | Yes. Connected nodes, capability **`capgo_watch`**, `activationState` **2** if any node connected else **0**. Returns unsupported defaults if Play services fails. | Always unsupported defaults |
+| `getPluginVersion` | Yes | Yes | Yes (`version: "web"`) |
+| `messageReceived` | Yes | Yes. Incoming `/capgo/message` (JSON body). | Listener API only; no events |
+| `messageReceivedWithReply` | Yes | Yes. Incoming `/capgo/message/withreply`; phone generates `callbackId`. | Listener API only; no events |
+| `applicationContextReceived` | Yes | Yes. DataItem `/capgo/context`. | Listener API only; no events |
+| `userInfoReceived` | Yes | Yes. DataItem `/capgo/userinfo/*`; phone **deletes** the item after handling. | Listener API only; no events |
+| `reachabilityChanged` | Yes | **Not emitted** (poll `getInfo()`). | **Not emitted** |
+| `activationStateChanged` | Yes (WCSession states 0/1/2) | **Not emitted** | **Not emitted** |
+
+**Wear OS Data Layer paths** (phone plugin and watch app must use the same strings):
+
+| Path | Direction | Mechanism |
+| --- | --- | --- |
+| `/capgo/message` | Both ways | `MessageClient` one-way JSON payload |
+| `/capgo/message/withreply` | Watch → phone (typical) | `MessageClient`; phone replies with `replyToMessage` on `/capgo/reply/{callbackId}` |
+| `/capgo/reply/{callbackId}` | Phone → watch | `MessageClient` JSON reply |
+| `/capgo/context` | Both ways | `DataClient` DataItem, field `payload` |
+| `/capgo/userinfo/{uuid}` | Both ways | `DataClient` DataItem, field `payload` |
 
 ---
 
-## Complete Setup Tutorial
+## Apple Watch setup guide
 
 This tutorial walks you through setting up bidirectional communication between your Capacitor app and Apple Watch. Follow each step carefully.
 
@@ -93,7 +134,7 @@ Your iOS app needs specific capabilities to communicate with Apple Watch.
 2. Go to the **Signing & Capabilities** tab
 3. Click the **+ Capability** button
 
-![Add capability in Xcode](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/add-capability.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/add-capability.png" alt="Add capability in Xcode" width="600">
 
 4. Add the following capabilities:
    - **Background Modes** - Enable "Background fetch" and "Remote notifications"
@@ -101,18 +142,17 @@ Your iOS app needs specific capabilities to communicate with Apple Watch.
 
 Your capabilities should look like this when complete:
 
-![Final capabilities configuration](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/capabilities-final.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/capabilities-final.png" alt="Final capabilities configuration" width="600">
 
 ### Step 3: Configure AppDelegate.swift
 
-> [!NOTE] 
-> For now this will not compile. This is fine, we will fix in later steps
+The Capacitor plugin owns WatchConnectivity on the phone: when `@capgo/capacitor-watch` loads, it sets the `WCSession` delegate and calls `activate()`. **Do not** assign `WCSession.default.delegate` or call `activate()` in your iOS app; doing so can break plugin messaging.
+
+Your phone app's `AppDelegate` only needs the usual Capacitor setup (no WatchConnectivity imports or session code):
 
 ```swift
 import UIKit
 import Capacitor
-import WatchConnectivity
-import CapgoWatchSDK
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -120,11 +160,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Initialize WatchConnectivity session
-        if WCSession.isSupported() {
-            WCSession.default.delegate = CapWatchSessionDelegate.shared
-            WCSession.default.activate()
-        }
         return true
     }
 
@@ -140,7 +175,7 @@ Now create the watchOS companion app:
 2. Select **watchOS** tab
 3. Choose **App** and click Next
 
-![Create watch target](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-watch.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-watch.png" alt="Create watch target" width="600">
 
 4. Configure the watch app:
    - **Product Name**: Your app name (e.g., "MyApp Watch")
@@ -149,7 +184,7 @@ Now create the watchOS companion app:
    - **Language**: Swift
    - **User Interface**: SwiftUI
 
-![Watch target options](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-target-options.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-target-options.png" alt="Watch target options" width="600">
 
 ### Step 5: Add the CapgoWatchSDK Package
 
@@ -159,24 +194,24 @@ The watch app needs our SDK to communicate with the phone. Add it as a Swift Pac
 2. Go to **Package Dependencies** tab
 3. Click the **+** button to add a package
 
-![Project package dependencies](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-project-dependancies.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/spm-project-dependancies.png" alt="Project package dependencies" width="600">
 
 4. Click on the plus button to add a package
 
-![Plus button](./docs/plus_button.png)
+<img src="./docs/plus_button.png" alt="Plus button" width="600">
 
 5. Click **Add Package**
 
 
-![Add local SPM package](./docs/add_watch_sdk.png)
+<img src="./docs/add_watch_sdk.png" alt="Add local SPM package" width="600">
 
 6. When prompted, select **CapgoWatchSDK** and add it to your **Watch App target** (not the main app)
 
-![Pick target for package](./docs/target.png)
+<img src="./docs/target.png" alt="Pick target for package" width="600">
 
 After adding, your package dependencies should show the CapgoWatchSDK:
 
-![SPM finished](./docs/added.png)
+<img src="./docs/added.png" alt="SPM finished" width="600">
 
 ### Step 6: Fix the build for main app
 
@@ -188,13 +223,13 @@ Right now, your main app is missing the CapgoWatchSDK. We need to add it to the 
 4. Scroll to `Frameworks, Libraries, and Embedded Content`
 5. Click the plus button to add a framework
 
-![Add framework](./docs/add_framework.png)
+<img src="./docs/add_framework.png" alt="Add framework" width="600">
 
 7. Click on the `CapgoWatchSDK` framework and click `Add`
 
-![Add framework](./docs/add_framework_2.png)
+<img src="./docs/add_framework_2.png" alt="Add framework" width="600">
 
-### Step 6: Configure the Watch App
+### Step 7: Configure the Watch App
 
 Update your watch app's main file to initialize the connection:
 
@@ -261,9 +296,9 @@ struct ContentView: View {
 
 Your watch app structure should look like this:
 
-![Watch sources added](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-sources-added.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-sources-added.png" alt="Watch sources added" width="300">
 
-### Step 7: Add Watch App Capabilities
+### Step 8: Add Watch App Capabilities
 
 The watch app also needs background capabilities:
 
@@ -273,18 +308,18 @@ The watch app also needs background capabilities:
 4. Add **Background Modes**
 5. Enable **Remote Notifications**
 
-![Watch remote notifications capability](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-remote-not.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/watch-remote-not.png" alt="Watch remote notifications capability" width="300">
 
-### Step 8: Use the Plugin in Your Capacitor App
+### Step 9: Use the Plugin in Your Capacitor App
 
 Now set up the JavaScript side in your Capacitor app:
 
 ```typescript
-import { Watch } from '@capgo/capacitor-watch';
+import { CapgoWatch } from '@capgo/capacitor-watch';
 
 // Check watch connectivity status
 async function checkWatchStatus() {
-  const info = await Watch.getInfo();
+  const info = await CapgoWatch.getInfo();
   console.log('Watch supported:', info.isSupported);
   console.log('Watch paired:', info.isPaired);
   console.log('Watch app installed:', info.isWatchAppInstalled);
@@ -292,49 +327,49 @@ async function checkWatchStatus() {
 }
 
 // Listen for messages from watch
-Watch.addListener('messageReceived', (event) => {
+CapgoWatch.addListener('messageReceived', (event) => {
   console.log('Message from watch:', event.message);
   // Handle the message (e.g., event.message.action === 'buttonTapped')
 });
 
 // Listen for messages that need a reply
-Watch.addListener('messageReceivedWithReply', async (event) => {
+CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
   console.log('Watch asking:', event.message);
 
   // Send reply back to watch
-  await Watch.replyToMessage({
+  await CapgoWatch.replyToMessage({
     callbackId: event.callbackId,
     data: { response: 'acknowledged', processed: true }
   });
 });
 
 // Listen for connection changes
-Watch.addListener('reachabilityChanged', (event) => {
+CapgoWatch.addListener('reachabilityChanged', (event) => {
   console.log('Watch reachable:', event.isReachable);
   // Update UI to show connection status
 });
 
 // Send data to watch (latest value wins)
 async function updateWatchContext(data: Record<string, unknown>) {
-  await Watch.updateApplicationContext({ context: data });
+  await CapgoWatch.updateApplicationContext({ context: data });
 }
 
 // Send message to watch (requires watch to be reachable)
 async function sendMessageToWatch(data: Record<string, unknown>) {
-  await Watch.sendMessage({ data });
+  await CapgoWatch.sendMessage({ data });
 }
 
 // Queue data for reliable delivery (even when watch is offline)
 async function queueDataForWatch(data: Record<string, unknown>) {
-  await Watch.transferUserInfo({ userInfo: data });
+  await CapgoWatch.transferUserInfo({ userInfo: data });
 }
 ```
 
-### Step 9: Build and Run
+### Step 10: Build and Run
 
 Use the target dropdown in Xcode to switch between building for your phone or watch:
 
-![Target dropdown](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-dropdown.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/target-dropdown.png" alt="Target dropdown" width="300">
 
 **Build order:**
 1. First, build and run the **iOS App** on your iPhone
@@ -347,43 +382,331 @@ Use the target dropdown in Xcode to switch between building for your phone or wa
 
 ---
 
+## Wear OS setup guide
+
+This guide mirrors the Apple Watch tutorial: add a **Wear OS module** to your existing Capacitor Android app, wire the same Data Layer paths the plugin uses on the phone, and call the plugin from TypeScript on the phone.
+
+Full reference: [Capacitor Watch docs](https://capgo.app/docs/plugins/watch/).
+
+### Step 1: Install the plugin on the phone app
+
+```bash
+npm install @capgo/capacitor-watch
+npx cap sync android
+```
+
+Open the Android project:
+
+```bash
+npx cap open android
+```
+
+The Capacitor Android library already depends on `play-services-wearable` **18.2.0** (see the plugin `android/build.gradle`). You do **not** need to add that dependency to the phone module again unless you call Wear APIs directly from the phone app.
+
+### Step 2: Create the Wear OS app module
+
+1. In Android Studio, **File > New > New Module**.
+2. Choose **Wear OS > Empty Wear App** (or **Wear OS app**).
+3. Set **Application ID** to the **same `applicationId`** as your Capacitor `app` module (required for the Data Layer).
+4. Use the **same signing config** as the phone app for release builds.
+
+Example `wear/build.gradle.kts` dependencies (match the plugin version):
+
+```kotlin
+dependencies {
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
+}
+```
+
+The Wear module should target at least **minSdk 24** to align with the plugin.
+
+### Step 3: Advertise the `capgo_watch` capability
+
+The phone plugin calls `CapabilityClient.getCapability("capgo_watch", FILTER_ALL)` to set `isWatchAppInstalled`. Your watch app must advertise that capability.
+
+`wear/src/main/res/values/wear.xml`:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="android_wear_capabilities" translatable="false">
+        <item>capgo_watch</item>
+    </string-array>
+</resources>
+```
+
+`wear/src/main/AndroidManifest.xml` (inside `<application>`):
+
+```xml
+<meta-data
+    android:name="com.google.android.gms.wearable.CAPABILITIES"
+    android:resource="@array/android_wear_capabilities" />
+```
+
+### Step 4: Register a Wearable listener for `/capgo` paths
+
+Use a `WearableListenerService` so the watch receives messages and data items while the app is in the background.
+
+`wear/src/main/AndroidManifest.xml`:
+
+```xml
+<service
+    android:name=".CapgoWearListenerService"
+    android:exported="true">
+    <intent-filter>
+        <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+        <data
+            android:scheme="wear"
+            android:host="*"
+            android:pathPrefix="/capgo" />
+    </intent-filter>
+    <intent-filter>
+        <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+        <data
+            android:scheme="wear"
+            android:host="*"
+            android:pathPrefix="/capgo" />
+    </intent-filter>
+</service>
+```
+
+### Step 5: Watch-side Kotlin (listener + send/reply)
+
+Constants must match `CapgoWatchPlugin.java` on the phone:
+
+```kotlin
+// CapgoWearPaths.kt
+object CapgoWearPaths {
+    const val CAPABILITY = "capgo_watch"
+    const val MESSAGE = "/capgo/message"
+    const val MESSAGE_WITH_REPLY = "/capgo/message/withreply"
+    const val REPLY_PREFIX = "/capgo/reply/"
+    const val CONTEXT = "/capgo/context"
+    const val USER_INFO_PREFIX = "/capgo/userinfo/"
+    const val PAYLOAD_KEY = "payload"
+}
+```
+
+```kotlin
+// CapgoWearListenerService.kt
+package com.example.app.wear // use your wear module package
+
+import com.google.android.gms.wearable.DataEvent
+import com.google.android.gms.wearable.DataEventBuffer
+import com.google.android.gms.wearable.DataMapItem
+import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
+import com.google.android.gms.wearable.WearableListenerService
+import org.json.JSONObject
+
+class CapgoWearListenerService : WearableListenerService() {
+
+    override fun onMessageReceived(messageEvent: MessageEvent) {
+        val json = JSONObject(String(messageEvent.data, Charsets.UTF_8))
+        when {
+            messageEvent.path == CapgoWearPaths.MESSAGE -> {
+                // One-way message from phone (or another node)
+                handlePhoneMessage(json)
+            }
+            messageEvent.path.startsWith(CapgoWearPaths.REPLY_PREFIX) -> {
+                // Reply from phone after watch sent MESSAGE_WITH_REPLY
+                handleReplyFromPhone(json)
+            }
+        }
+    }
+
+    override fun onDataChanged(dataEvents: DataEventBuffer) {
+        dataEvents.forEach { event ->
+            if (event.type != DataEvent.TYPE_CHANGED) return@forEach
+            val dataItem = event.dataItem
+            val path = dataItem.uri.path ?: return@forEach
+            val map = DataMapItem.fromDataItem(dataItem).dataMap
+            val payload = JSONObject(map.getString(CapgoWearPaths.PAYLOAD_KEY, "{}"))
+            when {
+                path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
+                path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
+                    val localId = try {
+                        com.google.android.gms.tasks.Tasks
+                            .await(Wearable.getNodeClient(this).localNode).id
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
+                    if (dataItem.uri.host == localId) return@forEach
+                    handleUserInfoFromPhone(payload)
+                    try {
+                        com.google.android.gms.tasks.Tasks.await(
+                            Wearable.getDataClient(this).deleteDataItems(dataItem.uri)
+                        )
+                    } catch (_: Exception) {
+                        // Deletion failed; item may be redelivered. Retry delete or use WorkManager.
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handlePhoneMessage(json: JSONObject) { /* update UI */ }
+    private fun handleReplyFromPhone(json: JSONObject) { /* complete request */ }
+    private fun handleContextFromPhone(json: JSONObject) { /* latest state */ }
+    private fun handleUserInfoFromPhone(json: JSONObject) { /* queued payload */ }
+}
+```
+
+**Send a one-way message to the phone** (watch → phone):
+
+```kotlin
+suspend fun sendToPhone(context: android.content.Context, data: JSONObject) {
+    val nodeClient = Wearable.getNodeClient(context)
+    val messageClient = Wearable.getMessageClient(context)
+    val nodes = nodeClient.connectedNodes.await()
+    val payload = data.toString().toByteArray(Charsets.UTF_8)
+    nodes.forEach { node ->
+        messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE, payload).await()
+    }
+}
+```
+
+**Request a reply from the phone** (watch → phone, phone uses `replyToMessage`):
+
+```kotlin
+suspend fun requestFromPhone(context: android.content.Context, data: JSONObject) {
+    val messageClient = Wearable.getMessageClient(context)
+    val nodes = Wearable.getNodeClient(context).connectedNodes.await()
+    val payload = data.toString().toByteArray(Charsets.UTF_8)
+    nodes.forEach { node ->
+        messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE_WITH_REPLY, payload).await()
+    }
+    // Phone generates callbackId and later sends JSON on /capgo/reply/{callbackId}
+    // Handle it in onMessageReceived when path.startsWith(REPLY_PREFIX)
+}
+```
+
+**Push application context or user info to the phone** (same paths the plugin uses):
+
+```kotlin
+suspend fun syncContextToPhone(context: android.content.Context, data: JSONObject) {
+    val request = com.google.android.gms.wearable.PutDataMapRequest.create(CapgoWearPaths.CONTEXT)
+    request.dataMap.putString(CapgoWearPaths.PAYLOAD_KEY, data.toString())
+    request.setUrgent()
+    Wearable.getDataClient(context).putDataItem(request.asPutDataRequest()).await()
+}
+
+suspend fun transferUserInfoToPhone(context: android.content.Context, data: JSONObject) {
+    val path = CapgoWearPaths.USER_INFO_PREFIX + java.util.UUID.randomUUID()
+    val request = com.google.android.gms.wearable.PutDataMapRequest.create(path)
+    request.dataMap.putString(CapgoWearPaths.PAYLOAD_KEY, data.toString())
+    request.setUrgent()
+    Wearable.getDataClient(context).putDataItem(request.asPutDataRequest()).await()
+}
+```
+
+Use `kotlinx.coroutines.tasks.await` or `Tasks.await` on a background thread for the `.await()` calls above.
+
+### Step 6: Phone-side TypeScript (Capacitor)
+
+Use the same TypeScript import and methods as on iOS for messaging and context sync. Android does not emit `reachabilityChanged` or `activationStateChanged`. Import from `@capgo/capacitor-watch` in your Capacitor web code:
+
+```typescript
+import { CapgoWatch } from '@capgo/capacitor-watch';
+
+export async function setupWearOsBridge() {
+  const info = await CapgoWatch.getInfo();
+  console.log('Wear supported:', info.isSupported);
+  console.log('Node connected:', info.isPaired);
+  console.log('Watch app (capgo_watch):', info.isWatchAppInstalled);
+
+  CapgoWatch.addListener('messageReceived', (event) => {
+    console.log('From watch:', event.message);
+  });
+
+  CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
+    await CapgoWatch.replyToMessage({
+      callbackId: event.callbackId,
+      data: { status: 'ok', echo: event.message },
+    });
+  });
+
+  CapgoWatch.addListener('applicationContextReceived', (event) => {
+    console.log('Context from watch:', event.context);
+  });
+
+  CapgoWatch.addListener('userInfoReceived', (event) => {
+    console.log('User info from watch:', event.userInfo);
+  });
+
+  // Android does not emit reachabilityChanged; poll when needed:
+  setInterval(async () => {
+    const latest = await CapgoWatch.getInfo();
+    console.log('Reachable:', latest.isReachable);
+  }, 5000);
+}
+
+export async function sendToWatch(data: Record<string, unknown>) {
+  await CapgoWatch.sendMessage({ data });
+}
+
+export async function syncState(context: Record<string, unknown>) {
+  await CapgoWatch.updateApplicationContext({ context });
+}
+```
+
+### Step 7: Build, deploy, and test
+
+1. Install the **phone** APK on a physical device or phone emulator with Google Play.
+2. Install the **wear** APK on a Wear OS emulator or watch (same `applicationId`).
+3. Pair watch and phone (Wear OS companion app on a real device, or Android Studio **Wear OS Pairing** for emulators).
+4. Open the Capacitor app on the phone so the plugin registers `MessageClient` / `DataClient` listeners.
+5. Confirm `getInfo()` reports `isWatchAppInstalled: true` after the watch app advertises `capgo_watch`.
+
+**Testing tips**
+
+- Use **adb** to verify nodes: `adb shell dumpsys activity service com.google.android.gms/.wearable.node.service.NodeService`
+- If messages do not arrive, confirm **matching applicationId**, both apps installed, and paths exactly `/capgo/...` as in the table above.
+- For emulator pairing, use Android Studio **Device Manager** and **Wear OS Pairing** as in [Connect your phone](https://developer.android.com/training/wearables/get-started/connect-phone) and the [Wear OS emulator guide](https://developer.android.com/training/wearables/get-started/emulator).
+- Remember **iOS-only** events: use `getInfo()` on Android instead of `reachabilityChanged` / `activationStateChanged`.
+
+---
+
 ## Communication Methods
 
-Choose the right method for your use case:
+Choose the right method for your use case (Apple Watch and Wear OS; see [platform support](#platform-support) for differences):
 
-| Method | Use Case | Delivery | Watch Must Be Reachable |
-|--------|----------|----------|-------------------------|
-| `sendMessage()` | Real-time interaction | Immediate | Yes |
-| `updateApplicationContext()` | Sync app state | Latest value only | No |
+| Method | Use Case | Delivery | Immediate send requirements |
+|--------|----------|----------|-----------------------------|
+| `sendMessage()` | Real-time interaction | Immediate | iOS: watch reachable. Android: at least one connected Wear node. |
+| `updateApplicationContext()` | Sync app state | Latest value only | No (Data Layer / WatchConnectivity background sync) |
 | `transferUserInfo()` | Important data | Queued, in order | No |
 
 ### Example: Complete Communication Flow
 
 ```typescript
-import { Watch } from '@capgo/capacitor-watch';
+import { Capacitor } from '@capacitor/core';
+import { CapgoWatch } from '@capgo/capacitor-watch';
 
 class WatchService {
   private isReachable = false;
 
   async initialize() {
     // Check initial status
-    const info = await Watch.getInfo();
+    const info = await CapgoWatch.getInfo();
     this.isReachable = info.isReachable;
 
-    // Monitor reachability
-    Watch.addListener('reachabilityChanged', (event) => {
-      this.isReachable = event.isReachable;
-    });
+    // iOS only: Android does not emit reachabilityChanged
+    if (Capacitor.getPlatform() === 'ios') {
+      CapgoWatch.addListener('reachabilityChanged', (event) => {
+        this.isReachable = event.isReachable;
+      });
+    }
 
     // Handle incoming messages
-    Watch.addListener('messageReceived', (event) => {
+    CapgoWatch.addListener('messageReceived', (event) => {
       this.handleWatchMessage(event.message);
     });
 
     // Handle request/reply messages
-    Watch.addListener('messageReceivedWithReply', async (event) => {
+    CapgoWatch.addListener('messageReceivedWithReply', async (event) => {
       const reply = await this.processWatchRequest(event.message);
-      await Watch.replyToMessage({
+      await CapgoWatch.replyToMessage({
         callbackId: event.callbackId,
         data: reply
       });
@@ -392,16 +715,36 @@ class WatchService {
 
   async syncAppState(state: Record<string, unknown>) {
     // Always works - queues if watch is unreachable
-    await Watch.updateApplicationContext({ context: state });
+    await CapgoWatch.updateApplicationContext({ context: state });
   }
 
   async sendInteractiveMessage(data: Record<string, unknown>) {
+    if (Capacitor.getPlatform() === 'android') {
+      const info = await CapgoWatch.getInfo();
+      this.isReachable = info.isReachable;
+    }
+
     if (!this.isReachable) {
       console.log('Watch not reachable, queueing message');
-      await Watch.transferUserInfo({ userInfo: data });
+      await CapgoWatch.transferUserInfo({ userInfo: data });
       return;
     }
-    await Watch.sendMessage({ data });
+
+    try {
+      await CapgoWatch.sendMessage({ data });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Queue only when send did not start (avoid duplicate delivery on partial multi-node sends)
+      const safeToQueue =
+        message.includes('No connected Wear OS devices') ||
+        message.includes('Watch is not reachable');
+      if (safeToQueue) {
+        console.log('Watch not reachable for sendMessage, queueing message');
+        await CapgoWatch.transferUserInfo({ userInfo: data });
+        return;
+      }
+      throw error;
+    }
   }
 
   private handleWatchMessage(message: Record<string, unknown>) {
@@ -422,7 +765,7 @@ class WatchService {
 
 ### Basic Watch UI
 
-![Example watch UI](https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/example-watchui.png)
+<img src="https://raw.githubusercontent.com/ionic-team/CapacitorWatch/main/img/example-watchui.png" alt="Example watch UI" width="300">
 
 ### Advanced Watch App with Data Display
 
@@ -802,7 +1145,7 @@ Information about Watch / Wear OS connectivity status.
 | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`isSupported`**         | <code>boolean</code> | Whether the watch communication API is supported on this device. - iOS: false on iPad; true on iPhone when WatchConnectivity is available. - Android: true when Google Play Services with Wear OS support is available; false otherwise. - Web: always false. |
 | **`isPaired`**            | <code>boolean</code> | Whether a watch is currently paired/connected. - iOS: whether an Apple Watch is paired with this iPhone. - Android: whether at least one Wear OS node is currently connected.                                                                                 |
-| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one connected Wear OS node is reachable (used as a proxy).                                                   |
+| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one Wear OS node advertises the `capgo_watch` capability (`CapabilityClient.getCapability`).                 |
 | **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                                                                                                                                                                                             |
 | **`activationState`**     | <code>number</code>  | The current session activation state. - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState). - Android: 2 when a Wear OS node is connected, 0 otherwise.                                                                            |
 
