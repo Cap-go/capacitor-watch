@@ -20,7 +20,7 @@ Talk to a companion watch app from your Capacitor app: send messages, sync state
 - **Messages**: `sendMessage()` for interactive messages and `replyToMessage()` to answer the watch.
 - **Shared state**: `updateApplicationContext()` syncs the latest state to the watch.
 - **Background transfer**: `transferUserInfo()` queues data for delivery.
-- **Events**: message, application context, user info, reachability and activation listeners.
+- **Events**: message, application context and user info listeners, plus reachability and activation listeners on iOS.
 - **Status**: `getInfo()` reports pairing, reachability and support.
 - **Platforms**: iOS and Android. iOS uses WatchConnectivity with the CapgoWatchSDK watch app. Android uses the Wear OS Data Layer. Not available on web.
 
