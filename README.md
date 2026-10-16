@@ -1,23 +1,32 @@
-# Capacitor Watch: Apple Watch + Wear OS
+# @capgo/capacitor-watch: Apple Watch + Wear OS
 
 **`@capgo/capacitor-watch`**: Capacitor 8 plugin for bidirectional phone and watch messaging on **iOS (Apple Watch)** and **Android (Wear OS)**.
 
-<a href="https://capgo.app/"><img src="https://capgo.app/readme-banner.svg?repo=Cap-go/capacitor-watch" alt="Capgo - Instant updates for Capacitor" /></a>
+Talk to a companion watch app from your Capacitor app: send messages, sync state and receive replies, with Apple Watch on iOS and Wear OS on Android.
+
+<a href="https://capgo.app/?ref=plugin_watch"><img src="https://capgo.app/readme-banner.svg?repo=Cap-go/capacitor-watch" alt="Capgo - Build Capacitor apps with AI, ship updates instantly" /></a>
 
 <div align="center">
-  <h2><a href="https://capgo.app/?ref=plugin_watch"> ➡️ Get Instant updates for your App with Capgo</a></h2>
-  <h2><a href="https://capgo.app/consulting/?ref=plugin_watch"> Missing a feature? We'll build the plugin for you 💪</a></h2>
+  <p><b>Capgo</b>: push fixes to your Capacitor users in minutes, build signed iOS and Android apps without a Mac, and roll back in one click.</p>
+  <h2><a href="https://capgo.app/register/?ref=plugin_watch">➡️ Get started for free</a></h2>
+  <p>14-day unlimited free trial. No credit card required</p>
 </div>
 
-## Features
+> 🤖 **Building with an AI coding agent?** Install [Capgo skills](https://capgo.app/skills/?ref=plugin_watch) so Claude Code, Codex, Cursor, Copilot, or Gemini CLI know how to install and use `@capgo/capacitor-watch` in your Capacitor app: `npx skills add Cap-go/capgo-skills`. Then ask your agent: *"Add @capgo/capacitor-watch to my Capacitor app and wire it up."* [Agent setup guides](https://capgo.app/agents/?ref=plugin_watch) · [Hosted MCP](https://capgo.app/docs/ai/mcp/?ref=plugin_watch)
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Cap-go/capacitor-watch/main/assets/github-social-preview.png" alt="@capgo/capacitor-watch for Capacitor apps" width="300" />
+</p>
+
+## Key features
 
 - **Bidirectional messaging** between the phone app and a paired **Apple Watch** or **Wear OS** watch
-- **Request/reply** flows (`messageReceivedWithReply` + `replyToMessage`) on both native platforms
-- **Application context** sync with latest-value semantics (`updateApplicationContext` / `applicationContextReceived`)
-- **User info transfers** for queued delivery (`transferUserInfo` / `userInfoReceived`)
-- **Connectivity status** via `getInfo()` (pairing, reachability, companion app detection)
-- **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly)
-- **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android
+- **Messages**: `sendMessage()` for interactive messages; **request/reply** flows (`messageReceivedWithReply` + `replyToMessage`) on both native platforms
+- **Shared state**: `updateApplicationContext()` syncs the latest state to the watch (latest-value semantics via `applicationContextReceived`)
+- **Background transfer**: `transferUserInfo()` queues data for reliable delivery (`userInfoReceived`)
+- **Events**: message, application context and user info listeners, plus reachability and activation listeners on iOS
+- **Status**: `getInfo()` reports pairing, reachability, companion app detection, and support
+- **Platforms**: iOS and Android. **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly). **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android. Not available on web.
 
 ## Why Capacitor Watch?
 
