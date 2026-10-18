@@ -82,7 +82,7 @@ npx cap sync
 - **iOS**: iOS 15.0+ (Capacitor 8 minimum). WatchConnectivity capability on the iPhone app.
 - **watchOS**: watchOS 9.0+. Companion watch app with **CapgoWatchSDK** (see [Apple Watch setup guide](#apple-watch-setup-guide)).
 - **Android (phone)**: API **24+** (`minSdkVersion` 24 in the plugin `android/build.gradle`). **Google Play services** with Wear OS support. A **paired Wear OS** device or emulator with the companion watch module installed.
-- **Wear OS (watch module)**: Same **`applicationId`** as the phone app, signed with the same key. Gradle dependency `com.google.android.gms:play-services-wearable:18.2.0` (same version as the plugin). Advertise capability **`capgo_watch`** so `getInfo().isWatchAppInstalled` works.
+- **Wear OS (watch module)**: Same **`applicationId`** as the phone app, signed with the same key. Gradle dependency `com.google.android.gms:play-services-wearable:20.0.1` (same version as the plugin). Advertise capability **`capgo_watch`** so `getInfo().isWatchAppInstalled` works.
 - **Hardware**: Real Apple Watch recommended for iOS (simulators do not support WatchConnectivity). Wear OS can be tested on emulators with phone + watch pairing.
 
 ## Platform support
@@ -410,7 +410,7 @@ Open the Android project:
 npx cap open android
 ```
 
-The Capacitor Android library already depends on `play-services-wearable` **18.2.0** (see the plugin `android/build.gradle`). You do **not** need to add that dependency to the phone module again unless you call Wear APIs directly from the phone app.
+The Capacitor Android library already depends on `play-services-wearable` **20.0.1** (see the plugin `android/build.gradle`). You do **not** need to add that dependency to the phone module again unless you call Wear APIs directly from the phone app.
 
 ### Step 2: Create the Wear OS app module
 
@@ -423,7 +423,7 @@ Example `wear/build.gradle.kts` dependencies (match the plugin version):
 
 ```kotlin
 dependencies {
-    implementation("com.google.android.gms:play-services-wearable:18.2.0")
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
 }
 ```
 
@@ -437,7 +437,8 @@ The phone plugin calls `CapabilityClient.getCapability("capgo_watch", FILTER_ALL
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@array/android_wear_capabilities">
     <string-array name="android_wear_capabilities" translatable="false">
         <item>capgo_watch</item>
     </string-array>
@@ -684,7 +685,7 @@ Choose the right method for your use case (Apple Watch and Wear OS; see [platfor
 |--------|----------|----------|-----------------------------|
 | `sendMessage()` | Real-time interaction | Immediate | iOS: watch reachable. Android: at least one connected Wear node. |
 | `updateApplicationContext()` | Sync app state | Latest value only | No (Data Layer / WatchConnectivity background sync) |
-| `transferUserInfo()` | Important data | Queued, in order | No |
+| `transferUserInfo()` | Important data | Queued; ordering depends on platform | No |
 
 ### Example: Complete Communication Flow
 
@@ -723,7 +724,7 @@ class WatchService {
   }
 
   async syncAppState(state: Record<string, unknown>) {
-    // Always works - queues if watch is unreachable
+    // Data Layer / WatchConnectivity sync while disconnected; can still reject on API or Play services errors
     await CapgoWatch.updateApplicationContext({ context: state });
   }
 
@@ -913,7 +914,8 @@ transferUserInfo(options: TransferUserInfoOptions) => Promise<void>
 ```
 
 Transfer user info to the watch.
-Transfers are queued and delivered in order, even if the watch is not currently reachable.
+Transfers are queued for delivery, even if the watch is not currently reachable.
+iOS delivers transfers in order. Android Data Layer transfers use separate paths and do not guarantee ordering.
 Use this for important data that must be delivered reliably.
 
 | Param         | Type                                                                        | Description             |
@@ -1131,9 +1133,9 @@ Options for updating the application context.
 
 Options for transferring user info.
 
-| Prop           | Type                                                          | Description                                                                  |
-| -------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **`userInfo`** | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The user info data to transfer. Transfers are queued and delivered in order. |
+| Prop           | Type                                                          | Description                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`userInfo`** | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The user info data to transfer. Transfers are queued for delivery. iOS delivers transfers in order. Android Data Layer transfers use separate paths and do not guarantee ordering. |
 
 
 #### ReplyMessageOptions
@@ -1154,7 +1156,7 @@ Information about Watch / Wear OS connectivity status.
 | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`isSupported`**         | <code>boolean</code> | Whether the watch communication API is supported on this device. - iOS: false on iPad; true on iPhone when WatchConnectivity is available. - Android: true when Google Play Services with Wear OS support is available; false otherwise. - Web: always false. |
 | **`isPaired`**            | <code>boolean</code> | Whether a watch is currently paired/connected. - iOS: whether an Apple Watch is paired with this iPhone. - Android: whether at least one Wear OS node is currently connected.                                                                                 |
-| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one Wear OS node advertises the `capgo_watch` capability (`CapabilityClient.getCapability`).                 |
+| **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one connected Wear OS node is reachable (used as a proxy).                                                   |
 | **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                                                                                                                                                                                             |
 | **`activationState`**     | <code>number</code>  | The current session activation state. - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState). - Android: 2 when a Wear OS node is connected, 0 otherwise.                                                                            |
 

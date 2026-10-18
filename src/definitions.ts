@@ -42,7 +42,8 @@ export interface UpdateContextOptions {
 export interface TransferUserInfoOptions {
   /**
    * The user info data to transfer.
-   * Transfers are queued and delivered in order.
+   * Transfers are queued for delivery. iOS delivers transfers in order.
+   * Android Data Layer transfers use separate paths and do not guarantee ordering.
    */
   userInfo: WatchMessageData;
 }
@@ -226,7 +227,8 @@ export interface CapgoWatchPlugin {
 
   /**
    * Transfer user info to the watch.
-   * Transfers are queued and delivered in order, even if the watch is not currently reachable.
+   * Transfers are queued for delivery, even if the watch is not currently reachable.
+   * iOS delivers transfers in order. Android Data Layer transfers use separate paths and do not guarantee ordering.
    * Use this for important data that must be delivered reliably.
    *
    * @param options - The user info options
