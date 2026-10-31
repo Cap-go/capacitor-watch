@@ -424,6 +424,7 @@ Example `wear/build.gradle.kts` dependencies (match the plugin version):
 ```kotlin
 dependencies {
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
 }
 ```
 
@@ -520,7 +521,9 @@ class CapgoWearListenerService : WearableListenerService() {
             }
             messageEvent.path.startsWith(CapgoWearPaths.REPLY_PREFIX) -> {
                 // Reply from phone after watch sent MESSAGE_WITH_REPLY
-                handleReplyFromPhone(json)
+                val callbackId =
+                    messageEvent.path.removePrefix(CapgoWearPaths.REPLY_PREFIX)
+                handleReplyFromPhone(callbackId, json)
             }
         }
     }
@@ -556,7 +559,7 @@ class CapgoWearListenerService : WearableListenerService() {
     }
 
     private fun handlePhoneMessage(json: JSONObject) { /* update UI */ }
-    private fun handleReplyFromPhone(json: JSONObject) { /* complete request */ }
+    private fun handleReplyFromPhone(callbackId: String, json: JSONObject) { /* complete request for callbackId */ }
     private fun handleContextFromPhone(json: JSONObject) { /* latest state */ }
     private fun handleUserInfoFromPhone(json: JSONObject) { /* queued payload */ }
 }
@@ -565,10 +568,15 @@ class CapgoWearListenerService : WearableListenerService() {
 **Send a one-way message to the phone** (watch → phone):
 
 ```kotlin
+import kotlinx.coroutines.tasks.await
+
 suspend fun sendToPhone(context: android.content.Context, data: JSONObject) {
     val nodeClient = Wearable.getNodeClient(context)
     val messageClient = Wearable.getMessageClient(context)
     val nodes = nodeClient.connectedNodes.await()
+    if (nodes.isEmpty()) {
+        throw IllegalStateException("No connected Wear OS node")
+    }
     val payload = data.toString().toByteArray(Charsets.UTF_8)
     nodes.forEach { node ->
         messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE, payload).await()
@@ -579,9 +587,14 @@ suspend fun sendToPhone(context: android.content.Context, data: JSONObject) {
 **Request a reply from the phone** (watch → phone, phone uses `replyToMessage`):
 
 ```kotlin
+import kotlinx.coroutines.tasks.await
+
 suspend fun requestFromPhone(context: android.content.Context, data: JSONObject) {
     val messageClient = Wearable.getMessageClient(context)
     val nodes = Wearable.getNodeClient(context).connectedNodes.await()
+    if (nodes.isEmpty()) {
+        throw IllegalStateException("No connected Wear OS node")
+    }
     val payload = data.toString().toByteArray(Charsets.UTF_8)
     nodes.forEach { node ->
         messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE_WITH_REPLY, payload).await()
@@ -610,7 +623,7 @@ suspend fun transferUserInfoToPhone(context: android.content.Context, data: JSON
 }
 ```
 
-Use `kotlinx.coroutines.tasks.await` or `Tasks.await` on a background thread for the `.await()` calls above.
+The snippets above use `import kotlinx.coroutines.tasks.await` (requires `kotlinx-coroutines-play-services` in Step 2). Alternatively use `com.google.android.gms.tasks.Tasks.await` on a background thread.
 
 ### Step 6: Phone-side TypeScript (Capacitor)
 
