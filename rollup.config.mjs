@@ -12,7 +12,7 @@ export default {
       inlineDynamicImports: true,
     },
     {
-      file: 'dist/plugin.cjs.js',
+      file: 'dist/plugin.cjs',
       format: 'cjs',
       sourcemap: true,
       inlineDynamicImports: true,
