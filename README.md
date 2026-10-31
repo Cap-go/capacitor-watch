@@ -234,7 +234,7 @@ Right now, your main app is missing the CapgoWatchSDK. We need to add it to the 
 
 <img src="./docs/add_framework.png" alt="Add framework" width="600">
 
-7. Click on the `CapgoWatchSDK` framework and click `Add`
+6. Click on the `CapgoWatchSDK` framework and click `Add`
 
 <img src="./docs/add_framework_2.png" alt="Add framework" width="600">
 
@@ -513,16 +513,23 @@ import org.json.JSONObject
 class CapgoWearListenerService : WearableListenerService() {
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
-        val json = JSONObject(String(messageEvent.data, Charsets.UTF_8))
+        val path = messageEvent.path
         when {
-            messageEvent.path == CapgoWearPaths.MESSAGE -> {
-                // One-way message from phone (or another node)
+            path == CapgoWearPaths.MESSAGE -> {
+                val json = try {
+                    JSONObject(String(messageEvent.data, Charsets.UTF_8))
+                } catch (_: Exception) {
+                    return
+                }
                 handlePhoneMessage(json)
             }
-            messageEvent.path.startsWith(CapgoWearPaths.REPLY_PREFIX) -> {
-                // Reply from phone after watch sent MESSAGE_WITH_REPLY
-                val callbackId =
-                    messageEvent.path.removePrefix(CapgoWearPaths.REPLY_PREFIX)
+            path.startsWith(CapgoWearPaths.REPLY_PREFIX) -> {
+                val json = try {
+                    JSONObject(String(messageEvent.data, Charsets.UTF_8))
+                } catch (_: Exception) {
+                    return
+                }
+                val callbackId = path.removePrefix(CapgoWearPaths.REPLY_PREFIX)
                 handleReplyFromPhone(callbackId, json)
             }
         }
@@ -533,8 +540,12 @@ class CapgoWearListenerService : WearableListenerService() {
             if (event.type != DataEvent.TYPE_CHANGED) return@forEach
             val dataItem = event.dataItem
             val path = dataItem.uri.path ?: return@forEach
-            val map = DataMapItem.fromDataItem(dataItem).dataMap
-            val payload = JSONObject(map.getString(CapgoWearPaths.PAYLOAD_KEY, "{}"))
+            val payload = try {
+                val map = DataMapItem.fromDataItem(dataItem).dataMap
+                JSONObject(map.getString(CapgoWearPaths.PAYLOAD_KEY, "{}"))
+            } catch (_: Exception) {
+                return@forEach
+            }
             when {
                 path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
                 path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
