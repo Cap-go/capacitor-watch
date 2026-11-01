@@ -542,7 +542,9 @@ class CapgoWearListenerService : WearableListenerService() {
             val path = dataItem.uri.path ?: return@forEach
             val payload = try {
                 val map = DataMapItem.fromDataItem(dataItem).dataMap
-                JSONObject(map.getString(CapgoWearPaths.PAYLOAD_KEY, "{}"))
+                val rawPayload = map.getString(CapgoWearPaths.PAYLOAD_KEY, null)
+                    ?: return@forEach
+                JSONObject(rawPayload)
             } catch (_: Exception) {
                 return@forEach
             }

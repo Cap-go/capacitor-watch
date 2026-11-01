@@ -178,7 +178,10 @@ public class CapgoWatchPlugin extends Plugin {
 
             try {
                 final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                final String payload = dataMap.getString("payload", "{}");
+                final String payload = dataMap.getString("payload", null);
+                if (payload == null) {
+                    continue;
+                }
                 final JSONObject json = new JSONObject(payload);
                 final JSObject data = new JSObject(json.toString());
 
