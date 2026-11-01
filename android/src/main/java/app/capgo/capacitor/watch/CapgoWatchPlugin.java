@@ -187,19 +187,23 @@ public class CapgoWatchPlugin extends Plugin {
                     evt.put("context", data);
                     notifyListeners("applicationContextReceived", evt);
                 } else {
-                    try {
-                        final String localId = Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
-                        if (localId.equals(item.getUri().getHost())) {
-                            continue;
+                    final Uri itemUri = item.getUri();
+                    final String itemHost = itemUri.getHost();
+                    final JSObject userInfoPayload = data;
+                    executor.execute(() -> {
+                        try {
+                            final String localId = Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
+                            if (localId.equals(itemHost)) {
+                                return;
+                            }
+                            final JSObject evt = new JSObject();
+                            evt.put("userInfo", userInfoPayload);
+                            notifyListeners("userInfoReceived", evt);
+                            deleteDataItem(itemUri);
+                        } catch (ExecutionException | InterruptedException e) {
+                            Log.w(TAG, "Could not resolve local node for user info filter", e);
                         }
-                    } catch (ExecutionException | InterruptedException e) {
-                        Log.w(TAG, "Could not resolve local node for user info filter", e);
-                        continue;
-                    }
-                    final JSObject evt = new JSObject();
-                    evt.put("userInfo", data);
-                    notifyListeners("userInfoReceived", evt);
-                    deleteDataItem(item.getUri());
+                    });
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
