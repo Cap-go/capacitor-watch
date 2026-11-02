@@ -70,6 +70,10 @@ public class CapgoWatchPlugin extends Plugin {
     /** Pending reply callbacks expire after 5 minutes. */
     private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
 
+    private static final int LOCAL_NODE_LOOKUP_MAX_ATTEMPTS = 4;
+    private static final long LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS = 100L;
+    private static final long LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS = 2000L;
+
     /** Maps callbackId to pending reply metadata. */
     private final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
 
@@ -194,24 +198,56 @@ public class CapgoWatchPlugin extends Plugin {
                     final String itemHost = itemUri.getHost();
                     final JSObject userInfoPayload = data;
                     executor.execute(() -> {
-                        try {
-                            final String localId = Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
-                            if (localId.equals(itemHost)) {
-                                return;
-                            }
-                            final JSObject evt = new JSObject();
-                            evt.put("userInfo", userInfoPayload);
-                            notifyListeners("userInfoReceived", evt);
-                            deleteDataItem(itemUri);
-                        } catch (ExecutionException | InterruptedException e) {
-                            Log.w(TAG, "Could not resolve local node for user info filter", e);
+                        final String localId = resolveLocalNodeIdWithRetry();
+                        if (localId == null) {
+                            return;
                         }
+                        if (localId.equals(itemHost)) {
+                            return;
+                        }
+                        final JSObject evt = new JSObject();
+                        evt.put("userInfo", userInfoPayload);
+                        notifyListeners("userInfoReceived", evt);
+                        deleteDataItem(itemUri);
                     });
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
             }
         }
+    }
+
+    /**
+     * Resolves the local Wear node id, retrying transient {@link ExecutionException} failures.
+     */
+    private String resolveLocalNodeIdWithRetry() {
+        long backoffMs = LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS;
+        ExecutionException lastFailure = null;
+        for (int attempt = 0; attempt < LOCAL_NODE_LOOKUP_MAX_ATTEMPTS; attempt++) {
+            try {
+                return Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Log.w(TAG, "Could not resolve local node for user info filter", e);
+                return null;
+            } catch (ExecutionException e) {
+                lastFailure = e;
+                if (attempt + 1 >= LOCAL_NODE_LOOKUP_MAX_ATTEMPTS) {
+                    break;
+                }
+                Log.w(TAG, "Local node lookup failed, retrying", e);
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    Log.w(TAG, "Could not resolve local node for user info filter", ie);
+                    return null;
+                }
+                backoffMs = Math.min(backoffMs * 2, LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS);
+            }
+        }
+        Log.w(TAG, "Could not resolve local node for user info filter", lastFailure);
+        return null;
     }
 
     private void deleteDataItem(final Uri uri) {
