@@ -83,6 +83,8 @@ public class CapgoWatchPlugin extends Plugin {
     private MessageClient messageClient;
     private DataClient dataClient;
 
+    private volatile boolean pluginDestroyed;
+
     private final MessageClient.OnMessageReceivedListener messageListener = this::handleMessageReceived;
     private final DataClient.OnDataChangedListener dataListener = this::handleDataChanged;
 
@@ -99,14 +101,17 @@ public class CapgoWatchPlugin extends Plugin {
 
     @Override
     public void load() {
+        pluginDestroyed = false;
         messageClient = Wearable.getMessageClient(getContext());
         dataClient = Wearable.getDataClient(getContext());
         messageClient.addListener(messageListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register message listener", e));
         dataClient.addListener(dataListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register data listener", e));
+        scanPendingUserInfoItems();
     }
 
     @Override
     protected void handleOnDestroy() {
+        pluginDestroyed = true;
         if (messageClient != null) {
             messageClient.removeListener(messageListener);
         }
@@ -114,6 +119,14 @@ public class CapgoWatchPlugin extends Plugin {
             dataClient.removeListener(dataListener);
         }
         executor.shutdown();
+    }
+
+    @Override
+    public void addListener(final PluginCall call) {
+        super.addListener(call);
+        if ("userInfoReceived".equals(call.getString("eventName"))) {
+            scanPendingUserInfoItems();
+        }
     }
 
     private void expirePendingReplies() {
@@ -194,27 +207,81 @@ public class CapgoWatchPlugin extends Plugin {
                     evt.put("context", data);
                     notifyListeners("applicationContextReceived", evt);
                 } else {
-                    final Uri itemUri = item.getUri();
-                    final String itemHost = itemUri.getHost();
-                    final JSObject userInfoPayload = data;
-                    executor.execute(() -> {
-                        final String localId = resolveLocalNodeIdWithRetry();
-                        if (localId == null) {
-                            return;
-                        }
-                        if (localId.equals(itemHost)) {
-                            return;
-                        }
-                        final JSObject evt = new JSObject();
-                        evt.put("userInfo", userInfoPayload);
-                        notifyListeners("userInfoReceived", evt);
-                        deleteDataItem(itemUri);
-                    });
+                    scheduleUserInfoDelivery(item, data);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
             }
         }
+    }
+
+    private void scheduleUserInfoDelivery(final DataItem item, final JSObject userInfoPayload) {
+        final Uri itemUri = item.getUri();
+        final String itemHost = itemUri.getHost();
+        executor.execute(() -> {
+            if (pluginDestroyed) {
+                return;
+            }
+            final String localId = resolveLocalNodeIdWithRetry();
+            if (localId == null) {
+                return;
+            }
+            if (localId.equals(itemHost)) {
+                return;
+            }
+            deliverUserInfoFromRemote(itemUri, userInfoPayload);
+        });
+    }
+
+    private void deliverUserInfoFromRemote(final Uri itemUri, final JSObject userInfoPayload) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            return;
+        }
+        final JSObject evt = new JSObject();
+        evt.put("userInfo", userInfoPayload);
+        notifyListeners("userInfoReceived", evt);
+        deleteDataItem(itemUri);
+    }
+
+    private void scanPendingUserInfoItems() {
+        if (dataClient == null) {
+            return;
+        }
+        executor.execute(() -> {
+            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+                return;
+            }
+            try {
+                final Uri prefix = new Uri.Builder().scheme("wear").path(PATH_USER_INFO).build();
+                final Iterable<DataItem> items = Tasks.await(dataClient.getDataItems(prefix));
+                for (final DataItem item : items) {
+                    if (pluginDestroyed) {
+                        return;
+                    }
+                    final String path = item.getUri().getPath();
+                    if (path == null || !path.startsWith(PATH_USER_INFO)) {
+                        continue;
+                    }
+                    try {
+                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                        final String payload = dataMap.getString("payload", null);
+                        if (payload == null) {
+                            continue;
+                        }
+                        final JSONObject json = new JSONObject(payload);
+                        final JSObject data = new JSObject(json.toString());
+                        scheduleUserInfoDelivery(item, data);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error scanning pending user info DataItem", e);
+                    }
+                }
+            } catch (ExecutionException | InterruptedException e) {
+                Log.w(TAG, "Failed to scan pending user info DataItems", e);
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        });
     }
 
     /**
