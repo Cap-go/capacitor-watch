@@ -1254,7 +1254,9 @@ Event data for activation state changes.
 
 #### WatchMessageData
 
-Data that can be sent between iPhone and Apple Watch.
+JSON-serializable payload sent between the phone app and the watch companion app.
+On iOS this crosses WatchConnectivity between iPhone and Apple Watch.
+On Android this crosses the Wear OS Data Layer between the phone and Wear OS app.
 Values must be serializable (string, number, boolean, arrays, or nested objects).
 
 <code><a href="#record">Record</a>&lt;string, unknown&gt;</code>

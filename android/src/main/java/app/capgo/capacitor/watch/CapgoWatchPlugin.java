@@ -76,6 +76,10 @@ public class CapgoWatchPlugin extends Plugin {
     private static final long LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS = 100L;
     private static final long LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS = 2000L;
 
+    private static final int PENDING_USER_INFO_SCAN_MAX_ATTEMPTS = 4;
+    private static final long PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS = 200L;
+    private static final long PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS = 2000L;
+
     /** Maps callbackId to pending reply metadata. */
     private final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
 
@@ -229,6 +233,7 @@ public class CapgoWatchPlugin extends Plugin {
         }
         final String itemHost = itemUri.getHost();
         executor.execute(() -> {
+            boolean bridgeTaskPosted = false;
             try {
                 if (pluginDestroyed) {
                     return;
@@ -240,9 +245,18 @@ public class CapgoWatchPlugin extends Plugin {
                 if (localId.equals(itemHost)) {
                     return;
                 }
-                deliverUserInfoFromRemote(itemUri, userInfoPayload);
+                execute(() -> {
+                    try {
+                        deliverUserInfoFromRemote(itemUri, userInfoPayload);
+                    } finally {
+                        userInfoDeliveryClaims.remove(claimKey);
+                    }
+                });
+                bridgeTaskPosted = true;
             } finally {
-                userInfoDeliveryClaims.remove(claimKey);
+                if (!bridgeTaskPosted) {
+                    userInfoDeliveryClaims.remove(claimKey);
+                }
             }
         });
     }
@@ -261,44 +275,75 @@ public class CapgoWatchPlugin extends Plugin {
         if (dataClient == null) {
             return;
         }
+        executor.execute(() -> scanPendingUserInfoItemsAttempt(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS));
+    }
+
+    private void scanPendingUserInfoItemsAttempt(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            return;
+        }
+        try {
+            final Uri prefix = Uri.parse("wear://*" + PATH_USER_INFO);
+            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(prefix, DataClient.FILTER_PREFIX));
+            try {
+                for (final DataItem item : buffer) {
+                    if (pluginDestroyed) {
+                        return;
+                    }
+                    final String path = item.getUri().getPath();
+                    if (path == null || !path.startsWith(PATH_USER_INFO)) {
+                        continue;
+                    }
+                    try {
+                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                        final String payload = dataMap.getString("payload", null);
+                        if (payload == null) {
+                            continue;
+                        }
+                        final JSONObject json = new JSONObject(payload);
+                        final JSObject data = new JSObject(json.toString());
+                        scheduleUserInfoDelivery(item, data);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error scanning pending user info DataItem", e);
+                    }
+                }
+            } finally {
+                buffer.release();
+            }
+        } catch (ExecutionException | InterruptedException e) {
+            Log.w(TAG, "Failed to scan pending user info DataItems", e);
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            schedulePendingUserInfoScanRetry(attempt, backoffMs);
+        }
+    }
+
+    private void schedulePendingUserInfoScanRetry(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            return;
+        }
+        if (attempt + 1 >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
+            Log.w(TAG, "Pending user info scan exhausted retries");
+            return;
+        }
+        final int nextAttempt = attempt + 1;
+        final long nextBackoffMs = Math.min(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS);
         executor.execute(() -> {
             if (pluginDestroyed || !hasListeners("userInfoReceived")) {
                 return;
             }
             try {
-                final Uri prefix = Uri.parse("wear://*" + PATH_USER_INFO);
-                final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(prefix, DataClient.FILTER_PREFIX));
-                try {
-                    for (final DataItem item : buffer) {
-                        if (pluginDestroyed) {
-                            return;
-                        }
-                        final String path = item.getUri().getPath();
-                        if (path == null || !path.startsWith(PATH_USER_INFO)) {
-                            continue;
-                        }
-                        try {
-                            final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                            final String payload = dataMap.getString("payload", null);
-                            if (payload == null) {
-                                continue;
-                            }
-                            final JSONObject json = new JSONObject(payload);
-                            final JSObject data = new JSObject(json.toString());
-                            scheduleUserInfoDelivery(item, data);
-                        } catch (Exception e) {
-                            Log.e(TAG, "Error scanning pending user info DataItem", e);
-                        }
-                    }
-                } finally {
-                    buffer.release();
-                }
-            } catch (ExecutionException | InterruptedException e) {
-                Log.w(TAG, "Failed to scan pending user info DataItems", e);
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
+                Thread.sleep(backoffMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
             }
+            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+                return;
+            }
+            scanPendingUserInfoItemsAttempt(nextAttempt, nextBackoffMs);
         });
     }
 
