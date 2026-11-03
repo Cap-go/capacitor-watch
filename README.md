@@ -410,7 +410,7 @@ Open the Android project:
 npx cap open android
 ```
 
-The Capacitor Android library already depends on `play-services-wearable` **20.0.1** (see the plugin `android/build.gradle`). You do **not** need to add that dependency to the phone module again unless you call Wear APIs directly from the phone app.
+This plugin already depends on `play-services-wearable` **20.0.1** (see `android/build.gradle`). You do **not** need to add that dependency to the phone module again unless you call Wear APIs directly from the phone app.
 
 ### Step 2: Create the Wear OS app module
 
