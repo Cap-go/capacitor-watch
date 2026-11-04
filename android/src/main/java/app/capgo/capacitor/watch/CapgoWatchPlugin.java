@@ -245,13 +245,7 @@ public class CapgoWatchPlugin extends Plugin {
                 if (localId.equals(itemHost)) {
                     return;
                 }
-                execute(() -> {
-                    try {
-                        deliverUserInfoFromRemote(itemUri, userInfoPayload);
-                    } finally {
-                        userInfoDeliveryClaims.remove(claimKey);
-                    }
-                });
+                execute(() -> deliverUserInfoFromRemote(itemUri, userInfoPayload, claimKey));
                 bridgeTaskPosted = true;
             } finally {
                 if (!bridgeTaskPosted) {
@@ -261,14 +255,15 @@ public class CapgoWatchPlugin extends Plugin {
         });
     }
 
-    private void deliverUserInfoFromRemote(final Uri itemUri, final JSObject userInfoPayload) {
+    private void deliverUserInfoFromRemote(final Uri itemUri, final JSObject userInfoPayload, final String claimKey) {
         if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            userInfoDeliveryClaims.remove(claimKey);
             return;
         }
         final JSObject evt = new JSObject();
         evt.put("userInfo", userInfoPayload);
         notifyListeners("userInfoReceived", evt);
-        deleteDataItem(itemUri);
+        deleteDataItem(itemUri, () -> userInfoDeliveryClaims.remove(claimKey));
     }
 
     private void scanPendingUserInfoItems() {
@@ -380,11 +375,15 @@ public class CapgoWatchPlugin extends Plugin {
         return null;
     }
 
-    private void deleteDataItem(final Uri uri) {
+    private void deleteDataItem(final Uri uri, final Runnable onComplete) {
         if (dataClient == null) {
+            onComplete.run();
             return;
         }
-        dataClient.deleteDataItems(uri).addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e));
+        dataClient
+            .deleteDataItems(uri)
+            .addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e))
+            .addOnCompleteListener((task) -> onComplete.run());
     }
 
     // ── Plugin methods ────────────────────────────────────────────────────────

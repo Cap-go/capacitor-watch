@@ -502,6 +502,10 @@ object CapgoWearPaths {
 // CapgoWearListenerService.kt
 package com.example.app.wear // use your wear module package
 
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -511,6 +515,8 @@ import com.google.android.gms.wearable.WearableListenerService
 import org.json.JSONObject
 
 class CapgoWearListenerService : WearableListenerService() {
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         val path = messageEvent.path
@@ -540,34 +546,100 @@ class CapgoWearListenerService : WearableListenerService() {
             if (event.type != DataEvent.TYPE_CHANGED) return@forEach
             val dataItem = event.dataItem
             val path = dataItem.uri.path ?: return@forEach
-            val payload = try {
-                val map = DataMapItem.fromDataItem(dataItem).dataMap
-                val rawPayload = map.getString(CapgoWearPaths.PAYLOAD_KEY, null)
-                    ?: return@forEach
-                JSONObject(rawPayload)
-            } catch (_: Exception) {
-                return@forEach
-            }
+            val payload = parsePayload(dataItem) ?: return@forEach
             when {
                 path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
                 path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
-                    val localId = try {
-                        com.google.android.gms.tasks.Tasks
-                            .await(Wearable.getNodeClient(this).localNode).id
-                    } catch (_: Exception) {
+                    val localId = resolveLocalNodeIdWithRetry()
+                    if (localId == null) {
+                        schedulePendingUserInfoRescan(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
                         return@forEach
                     }
                     if (dataItem.uri.host == localId) return@forEach
-                    handleUserInfoFromPhone(payload)
-                    try {
-                        com.google.android.gms.tasks.Tasks.await(
-                            Wearable.getDataClient(this).deleteDataItems(dataItem.uri)
-                        )
-                    } catch (_: Exception) {
-                        // Deletion failed; item may be redelivered. Retry delete or use WorkManager.
-                    }
+                    deliverRemoteUserInfo(dataItem.uri, payload)
                 }
             }
+        }
+    }
+
+    private fun parsePayload(dataItem: com.google.android.gms.wearable.DataItem): JSONObject? {
+        return try {
+            val map = DataMapItem.fromDataItem(dataItem).dataMap
+            val rawPayload = map.getString(CapgoWearPaths.PAYLOAD_KEY, null) ?: return null
+            JSONObject(rawPayload)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveLocalNodeIdWithRetry(): String? {
+        var backoffMs = LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS
+        repeat(LOCAL_NODE_LOOKUP_MAX_ATTEMPTS) { attempt ->
+            try {
+                return com.google.android.gms.tasks.Tasks
+                    .await(Wearable.getNodeClient(this).localNode).id
+            } catch (_: Exception) {
+                if (attempt + 1 >= LOCAL_NODE_LOOKUP_MAX_ATTEMPTS) {
+                    return null
+                }
+                try {
+                    Thread.sleep(backoffMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return null
+                }
+                backoffMs = minOf(backoffMs * 2, LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS)
+            }
+        }
+        return null
+    }
+
+    private fun schedulePendingUserInfoRescan(attempt: Int, backoffMs: Long) {
+        if (attempt >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
+            return
+        }
+        mainHandler.postDelayed(
+            { scanPendingUserInfoFromPhone(attempt + 1, minOf(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS)) },
+            backoffMs
+        )
+    }
+
+    private fun scanPendingUserInfoFromPhone(attempt: Int, nextBackoffMs: Long) {
+        val localId = resolveLocalNodeIdWithRetry()
+        if (localId == null) {
+            schedulePendingUserInfoRescan(attempt, nextBackoffMs)
+            return
+        }
+        val dataClient = Wearable.getDataClient(this)
+        val prefix = Uri.parse("wear://*${CapgoWearPaths.USER_INFO_PREFIX}")
+        try {
+            val buffer = com.google.android.gms.tasks.Tasks.await(
+                dataClient.getDataItems(prefix, DataClient.FILTER_PREFIX)
+            )
+            try {
+                for (item in buffer) {
+                    val itemPath = item.uri.path ?: continue
+                    if (!itemPath.startsWith(CapgoWearPaths.USER_INFO_PREFIX)) continue
+                    if (item.uri.host == localId) continue
+                    val payload = parsePayload(item) ?: continue
+                    deliverRemoteUserInfo(item.uri, payload)
+                }
+            } finally {
+                buffer.release()
+            }
+        } catch (_: Exception) {
+            schedulePendingUserInfoRescan(attempt, nextBackoffMs)
+        }
+    }
+
+    private fun deliverRemoteUserInfo(uri: Uri, payload: JSONObject) {
+        handleUserInfoFromPhone(payload)
+        try {
+            com.google.android.gms.tasks.Tasks.await(
+                Wearable.getDataClient(this).deleteDataItems(uri)
+            )
+        } catch (_: Exception) {
+            // Deletion failed; item may be redelivered. Retry delete or use WorkManager.
         }
     }
 
@@ -575,6 +647,15 @@ class CapgoWearListenerService : WearableListenerService() {
     private fun handleReplyFromPhone(callbackId: String, json: JSONObject) { /* complete request for callbackId */ }
     private fun handleContextFromPhone(json: JSONObject) { /* latest state */ }
     private fun handleUserInfoFromPhone(json: JSONObject) { /* queued payload */ }
+
+    companion object {
+        private const val LOCAL_NODE_LOOKUP_MAX_ATTEMPTS = 4
+        private const val LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS = 100L
+        private const val LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS = 2000L
+        private const val PENDING_USER_INFO_SCAN_MAX_ATTEMPTS = 4
+        private const val PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS = 200L
+        private const val PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS = 2000L
+    }
 }
 ```
 
