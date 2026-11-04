@@ -94,6 +94,9 @@ public class CapgoWatchPlugin extends Plugin {
 
     private volatile boolean pluginDestroyed;
 
+    /** Cached Wear local node id; stable for the process lifetime. */
+    private volatile String cachedLocalNodeId;
+
     private final MessageClient.OnMessageReceivedListener messageListener = this::handleMessageReceived;
     private final DataClient.OnDataChangedListener dataListener = this::handleDataChanged;
 
@@ -238,9 +241,13 @@ public class CapgoWatchPlugin extends Plugin {
                 if (pluginDestroyed) {
                     return;
                 }
-                final String localId = resolveLocalNodeIdWithRetry();
+                String localId = cachedLocalNodeId;
                 if (localId == null) {
-                    return;
+                    localId = resolveLocalNodeIdWithRetry();
+                    if (localId == null) {
+                        return;
+                    }
+                    cachedLocalNodeId = localId;
                 }
                 if (localId.equals(itemHost)) {
                     return;

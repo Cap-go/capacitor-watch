@@ -503,8 +503,6 @@ object CapgoWearPaths {
 package com.example.app.wear // use your wear module package
 
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -512,11 +510,12 @@ import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
+import java.util.concurrent.Executors
 import org.json.JSONObject
 
 class CapgoWearListenerService : WearableListenerService() {
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val wearExecutor = Executors.newSingleThreadExecutor()
 
     override fun onMessageReceived(messageEvent: MessageEvent) {
         val path = messageEvent.path
@@ -598,10 +597,23 @@ class CapgoWearListenerService : WearableListenerService() {
         if (attempt >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
             return
         }
-        mainHandler.postDelayed(
-            { scanPendingUserInfoFromPhone(attempt + 1, minOf(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS)) },
-            backoffMs
-        )
+        wearExecutor.execute {
+            try {
+                Thread.sleep(backoffMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return@execute
+            }
+            scanPendingUserInfoFromPhone(
+                attempt + 1,
+                minOf(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS)
+            )
+        }
+    }
+
+    override fun onDestroy() {
+        wearExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     private fun scanPendingUserInfoFromPhone(attempt: Int, nextBackoffMs: Long) {
