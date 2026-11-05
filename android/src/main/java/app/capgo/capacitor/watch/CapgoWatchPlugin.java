@@ -216,6 +216,18 @@ public class CapgoWatchPlugin extends Plugin {
                 final JSObject data = new JSObject(json.toString());
 
                 if (isContext) {
+                    final String itemHost = item.getUri().getHost();
+                    String localId = cachedLocalNodeId;
+                    if (localId == null) {
+                        localId = resolveLocalNodeIdWithRetry();
+                        if (localId == null) {
+                            continue;
+                        }
+                        cachedLocalNodeId = localId;
+                    }
+                    if (localId.equals(itemHost)) {
+                        continue;
+                    }
                     final JSObject evt = new JSObject();
                     evt.put("context", data);
                     notifyListeners("applicationContextReceived", evt);

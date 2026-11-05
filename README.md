@@ -517,6 +517,13 @@ class CapgoWearListenerService : WearableListenerService() {
 
     private val wearExecutor = Executors.newSingleThreadExecutor()
 
+    override fun onCreate() {
+        super.onCreate()
+        wearExecutor.execute {
+            scanPendingUserInfoFromPhone(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
+        }
+    }
+
     override fun onMessageReceived(messageEvent: MessageEvent) {
         val path = messageEvent.path
         when {
@@ -547,7 +554,11 @@ class CapgoWearListenerService : WearableListenerService() {
             val path = dataItem.uri.path ?: return@forEach
             val payload = parsePayload(dataItem) ?: return@forEach
             when {
-                path == CapgoWearPaths.CONTEXT -> handleContextFromPhone(payload)
+                path == CapgoWearPaths.CONTEXT -> {
+                    val localId = resolveLocalNodeIdWithRetry() ?: return@forEach
+                    if (dataItem.uri.host == localId) return@forEach
+                    handleContextFromPhone(payload)
+                }
                 path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
                     val localId = resolveLocalNodeIdWithRetry()
                     if (localId == null) {
