@@ -5,6 +5,8 @@ import type { PluginListenerHandle } from '@capacitor/core';
 /**
  * Data that can be sent between iPhone and Apple Watch.
  * Values must be serializable (string, number, boolean, arrays, or nested objects).
+ * On iOS do not use `null` in payloads (including nested values); WatchConnectivity uses
+ * Foundation types and rejects `NSNull`.
  *
  * @since 8.0.0
  */
@@ -37,10 +39,10 @@ export interface SendMessageOptions {
  * @since 8.1.3
  */
 export interface SendMessageOptionsWithReply extends SendMessageOptions {
+  data: WatchMessageData;
   /**
    * Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.
    */
-  data: WatchMessageData;
   expectsReply: true;
 }
 

@@ -36,7 +36,7 @@ import org.json.JSONObject;
 public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
-    private static final String PLUGIN_VERSION = "8.1.3";
+    private static final String PLUGIN_VERSION = "8.1.19";
     private static final long PENDING_REPLY_TTL_MS = CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS;
 
     private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;

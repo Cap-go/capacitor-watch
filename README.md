@@ -526,9 +526,9 @@ struct StatusView: View {
 
 <docgen-index>
 
-* [`sendMessage(SendMessageOptionsWithReply)`](#sendmessagesendmessageoptionswithreply)
-* [`sendMessage(SendMessageOptions & { expectsReply?: false | undefined; })`](#sendmessagesendmessageoptions---expectsreply-false--undefined-)
-* [`sendMessage(SendMessageOptions)`](#sendmessagesendmessageoptions)
+* [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(...)`](#sendmessage)
 * [`updateApplicationContext(...)`](#updateapplicationcontext)
 * [`transferUserInfo(...)`](#transferuserinfo)
 * [`replyToMessage(...)`](#replytomessage)
@@ -557,7 +557,7 @@ Provides bidirectional messaging between the phone and a paired watch.
 - **Android**: uses Google Wear OS Data Layer API (play-services-wearable) to communicate with a Wear OS watch.
 - **Web**: not supported; all methods throw or return safe defaults.
 
-### sendMessage(SendMessageOptionsWithReply)
+### sendMessage(...)
 
 ```typescript
 sendMessage(options: SendMessageOptionsWithReply) => Promise<SendMessageResult>
@@ -578,7 +578,7 @@ Use this for time-sensitive, interactive communication.
 --------------------
 
 
-### sendMessage(SendMessageOptions & { expectsReply?: false | undefined; })
+### sendMessage(...)
 
 ```typescript
 sendMessage(options: SendMessageOptions & { expectsReply?: false; }) => Promise<void>
@@ -595,7 +595,7 @@ Send an interactive message to the watch without waiting for a reply.
 --------------------
 
 
-### sendMessage(SendMessageOptions)
+### sendMessage(...)
 
 ```typescript
 sendMessage(options: SendMessageOptions) => Promise<void | SendMessageResult>
@@ -866,10 +866,10 @@ Result returned when `sendMessage` is called with `expectsReply: true`.
 
 Options for sending a message that expects a reply from the watch.
 
-| Prop               | Type                                                          | Description                                                                                                                     |
-| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.                               |
-| **`expectsReply`** | <code>true</code>                                             | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). |
+| Prop               | Type                                                          | Description                                                                                               |
+| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects). |
+| **`expectsReply`** | <code>true</code>                                             | Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.         |
 
 
 #### SendMessageOptions
@@ -1001,6 +1001,8 @@ Event data for activation state changes.
 
 Data that can be sent between iPhone and Apple Watch.
 Values must be serializable (string, number, boolean, arrays, or nested objects).
+On iOS do not use `null` in payloads (including nested values); WatchConnectivity uses
+Foundation types and rejects `NSNull`.
 
 <code><a href="#record">Record</a>&lt;string, unknown&gt;</code>
 

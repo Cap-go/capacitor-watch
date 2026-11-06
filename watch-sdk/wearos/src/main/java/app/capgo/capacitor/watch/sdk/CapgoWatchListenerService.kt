@@ -419,10 +419,10 @@ class CapgoWatchListenerService : WearableListenerService() {
                     val payload = dataMap.getString("payload", "{}")
                     try {
                         val userInfo = CapgoWatchJson.objectToMap(JSONObject(payload))
-                        dispatch { it.onUserInfoReceived(userInfo) }
-                        // Delete only after successful dispatch so transient listener
-                        // failures can retry via Wear OS redelivery.
-                        Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        if (dispatch { it.onUserInfoReceived(userInfo) }) {
+                            // Delete only after a listener received the event.
+                            Wearable.getDataClient(this).deleteDataItems(itemUri)
+                        }
                     } catch (e: JSONException) {
                         Log.e(TAG, "Failed to parse user info; discarding unreadable DataItem on path $path", e)
                         Wearable.getDataClient(this).deleteDataItems(itemUri)
@@ -477,12 +477,14 @@ class CapgoWatchListenerService : WearableListenerService() {
         return CapgoWatchJson.objectToMap(JSONObject(String(bytes)))
     }
 
-    private fun dispatch(block: (CapgoWatchListener) -> Unit) {
+    private fun dispatch(block: (CapgoWatchListener) -> Unit): Boolean {
         val listener = registeredListener
-        if (listener != null) {
+        return if (listener != null) {
             block(listener)
+            true
         } else {
             Log.w(TAG, "No CapgoWatchListener registered")
+            false
         }
     }
 
