@@ -6,6 +6,9 @@ import type { PluginListenerHandle } from '@capacitor/core';
  * On Android this crosses the Wear OS Data Layer between the phone and Wear OS app.
  * Values must be serializable (string, number, boolean, arrays, or nested objects).
  *
+ * **iOS:** Do not use `null` anywhere in the payload (including nested arrays or objects).
+ * WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the session rejects.
+ *
  * @since 8.0.0
  */
 export type WatchMessageData = Record<string, unknown>;
@@ -62,6 +65,7 @@ export interface ReplyMessageOptions {
   callbackId: string;
   /**
    * The reply data to send back to the watch.
+   * If the event included `watchRequestId`, include the same key here so the watch can correlate.
    */
   data: WatchMessageData;
 }
@@ -129,6 +133,13 @@ export interface MessageReceivedWithReplyEvent {
    * The callback ID to use when replying with replyToMessage().
    */
   callbackId: string;
+  /**
+   * When the watch included `watchRequestId` in the request, the same value is exposed here.
+   * The phone should echo it in `replyToMessage` data so the watch can match the reply.
+   *
+   * @since 8.1.19
+   */
+  watchRequestId?: string | number | boolean;
 }
 
 /**

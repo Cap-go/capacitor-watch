@@ -487,6 +487,8 @@ Constants must match `CapgoWatchPlugin.java` on the phone:
 
 ```kotlin
 // CapgoWearPaths.kt
+package com.example.app.wear
+
 object CapgoWearPaths {
     const val CAPABILITY = "capgo_watch"
     const val MESSAGE = "/capgo/message"
@@ -516,10 +518,12 @@ import org.json.JSONObject
 class CapgoWearListenerService : WearableListenerService() {
 
     private val wearExecutor = Executors.newSingleThreadExecutor()
+    private val userInfoDeliveryClaims = java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     override fun onCreate() {
         super.onCreate()
         wearExecutor.execute {
+            scanPendingContextFromPhone(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
             scanPendingUserInfoFromPhone(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
         }
     }
@@ -551,22 +555,28 @@ class CapgoWearListenerService : WearableListenerService() {
         dataEvents.forEach { event ->
             if (event.type != DataEvent.TYPE_CHANGED) return@forEach
             val dataItem = event.dataItem
-            val path = dataItem.uri.path ?: return@forEach
-            val payload = parsePayload(dataItem) ?: return@forEach
-            when {
-                path == CapgoWearPaths.CONTEXT -> {
-                    val localId = resolveLocalNodeIdWithRetry() ?: return@forEach
-                    if (dataItem.uri.host == localId) return@forEach
-                    handleContextFromPhone(payload)
-                }
-                path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
-                    val localId = resolveLocalNodeIdWithRetry()
-                    if (localId == null) {
-                        schedulePendingUserInfoRescan(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
-                        return@forEach
+            wearExecutor.execute {
+                val path = dataItem.uri.path ?: return@execute
+                val payload = parsePayload(dataItem) ?: return@execute
+                when {
+                    path == CapgoWearPaths.CONTEXT -> {
+                        val localId = resolveLocalNodeIdWithRetry()
+                        if (localId == null) {
+                            schedulePendingContextRescan(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
+                            return@execute
+                        }
+                        if (dataItem.uri.host == localId) return@execute
+                        handleContextFromPhone(payload)
                     }
-                    if (dataItem.uri.host == localId) return@forEach
-                    deliverRemoteUserInfo(dataItem.uri, payload)
+                    path.startsWith(CapgoWearPaths.USER_INFO_PREFIX) -> {
+                        val localId = resolveLocalNodeIdWithRetry()
+                        if (localId == null) {
+                            schedulePendingUserInfoRescan(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS)
+                            return@execute
+                        }
+                        if (dataItem.uri.host == localId) return@execute
+                        deliverRemoteUserInfo(dataItem.uri, payload)
+                    }
                 }
             }
         }
@@ -622,9 +632,55 @@ class CapgoWearListenerService : WearableListenerService() {
         }
     }
 
+    private fun schedulePendingContextRescan(attempt: Int, backoffMs: Long) {
+        if (attempt >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
+            return
+        }
+        wearExecutor.execute {
+            try {
+                Thread.sleep(backoffMs)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return@execute
+            }
+            scanPendingContextFromPhone(
+                attempt + 1,
+                minOf(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS)
+            )
+        }
+    }
+
     override fun onDestroy() {
         wearExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun scanPendingContextFromPhone(attempt: Int, nextBackoffMs: Long) {
+        val localId = resolveLocalNodeIdWithRetry()
+        if (localId == null) {
+            schedulePendingContextRescan(attempt, nextBackoffMs)
+            return
+        }
+        val dataClient = Wearable.getDataClient(this)
+        val uri = Uri.parse("wear://*${CapgoWearPaths.CONTEXT}")
+        try {
+            val buffer = com.google.android.gms.tasks.Tasks.await(
+                dataClient.getDataItems(uri, DataClient.FILTER_LITERAL)
+            )
+            try {
+                for (item in buffer) {
+                    val itemPath = item.uri.path ?: continue
+                    if (itemPath != CapgoWearPaths.CONTEXT) continue
+                    if (item.uri.host == localId) continue
+                    val payload = parsePayload(item) ?: continue
+                    handleContextFromPhone(payload)
+                }
+            } finally {
+                buffer.release()
+            }
+        } catch (_: Exception) {
+            schedulePendingContextRescan(attempt, nextBackoffMs)
+        }
     }
 
     private fun scanPendingUserInfoFromPhone(attempt: Int, nextBackoffMs: Long) {
@@ -656,13 +712,19 @@ class CapgoWearListenerService : WearableListenerService() {
     }
 
     private fun deliverRemoteUserInfo(uri: Uri, payload: JSONObject) {
-        handleUserInfoFromPhone(payload)
+        val claimKey = uri.toString()
+        synchronized(userInfoDeliveryClaims) {
+            if (!userInfoDeliveryClaims.add(claimKey)) return
+        }
         try {
+            handleUserInfoFromPhone(payload)
             com.google.android.gms.tasks.Tasks.await(
                 Wearable.getDataClient(this).deleteDataItems(uri)
             )
         } catch (_: Exception) {
             // Deletion failed; item may be redelivered. Retry delete or use WorkManager.
+        } finally {
+            userInfoDeliveryClaims.remove(claimKey)
         }
     }
 
@@ -712,12 +774,15 @@ suspend fun requestFromPhone(context: android.content.Context, data: JSONObject)
     if (nodes.isEmpty()) {
         throw IllegalStateException("No connected Wear OS node")
     }
+    if (!data.has("watchRequestId")) {
+        data.put("watchRequestId", java.util.UUID.randomUUID().toString())
+    }
     val payload = data.toString().toByteArray(Charsets.UTF_8)
     nodes.forEach { node ->
         messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE_WITH_REPLY, payload).await()
     }
-    // Phone generates callbackId and later sends JSON on /capgo/reply/{callbackId}
-    // Handle it in onMessageReceived when path.startsWith(REPLY_PREFIX)
+    // Phone issues callbackId and echoes watchRequestId in the reply payload.
+    // Handle replies in onMessageReceived when path.startsWith(REPLY_PREFIX).
 }
 ```
 
@@ -1272,10 +1337,10 @@ Options for transferring user info.
 
 Options for replying to a message from the watch.
 
-| Prop             | Type                                                          | Description                                                     |
-| ---------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
-| **`callbackId`** | <code>string</code>                                           | The callback ID received in the messageReceivedWithReply event. |
-| **`data`**       | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The reply data to send back to the watch.                       |
+| Prop             | Type                                                          | Description                                                                                                                             |
+| ---------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **`callbackId`** | <code>string</code>                                           | The callback ID received in the messageReceivedWithReply event.                                                                         |
+| **`data`**       | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The reply data to send back to the watch. If the event included `watchRequestId`, include the same key here so the watch can correlate. |
 
 
 #### WatchInfo
@@ -1311,10 +1376,11 @@ Event data for received messages.
 
 Event data for messages that require a reply.
 
-| Prop             | Type                                                          | Description                                                 |
-| ---------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| **`message`**    | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The message data received from the watch.                   |
-| **`callbackId`** | <code>string</code>                                           | The callback ID to use when replying with replyToMessage(). |
+| Prop                 | Type                                                          | Description                                                                                                                                                                  | Since  |
+| -------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| **`message`**        | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The message data received from the watch.                                                                                                                                    |        |
+| **`callbackId`**     | <code>string</code>                                           | The callback ID to use when replying with replyToMessage().                                                                                                                  |        |
+| **`watchRequestId`** | <code>string \| number \| boolean</code>                      | When the watch included `watchRequestId` in the request, the same value is exposed here. The phone should echo it in `replyToMessage` data so the watch can match the reply. | 8.1.19 |
 
 
 #### ContextReceivedEvent
@@ -1362,6 +1428,9 @@ JSON-serializable payload sent between the phone app and the watch companion app
 On iOS this crosses WatchConnectivity between iPhone and Apple Watch.
 On Android this crosses the Wear OS Data Layer between the phone and Wear OS app.
 Values must be serializable (string, number, boolean, arrays, or nested objects).
+
+**iOS:** Do not use `null` anywhere in the payload (including nested arrays or objects).
+WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the session rejects.
 
 <code><a href="#record">Record</a>&lt;string, unknown&gt;</code>
 
