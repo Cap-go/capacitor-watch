@@ -19,7 +19,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     private var sessionDelegate: WatchSessionDelegate?
-    private var pendingReplies: [String: ([String: Any]) -> Void] = [:]
+    private var pendingReplies: [String: (watchRequestId: Any?, handler: ([String: Any]) -> Void)] = [:]
     private let replyLock = NSLock()
 
     override public func load() {
@@ -123,16 +123,19 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         replyLock.lock()
-        let replyHandler = pendingReplies.removeValue(forKey: callbackId)
+        let pending = pendingReplies.removeValue(forKey: callbackId)
         replyLock.unlock()
 
-        guard let handler = replyHandler else {
+        guard let pending else {
             call.reject("Invalid or expired callbackId")
             return
         }
 
-        let replyData = convertToWatchMessage(data)
-        handler(replyData)
+        var replyData = convertToWatchMessage(data)
+        if let wid = pending.watchRequestId, replyData["watchRequestId"] == nil {
+            replyData["watchRequestId"] = wid
+        }
+        pending.handler(replyData)
         call.resolve()
     }
 
@@ -166,9 +169,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - Internal methods for delegate
 
-    func storePendingReply(callbackId: String, handler: @escaping ([String: Any]) -> Void) {
+    func storePendingReply(
+        callbackId: String,
+        watchRequestId: Any?,
+        handler: @escaping ([String: Any]) -> Void
+    ) {
         replyLock.lock()
-        pendingReplies[callbackId] = handler
+        pendingReplies[callbackId] = (watchRequestId: watchRequestId, handler: handler)
         replyLock.unlock()
     }
 
@@ -252,12 +259,17 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
     ) {
         CAPLog.print("[CapgoWatch] Received message with reply: \(message)")
         let callbackId = UUID().uuidString
+        let watchRequestId = message["watchRequestId"]
 
-        plugin?.storePendingReply(callbackId: callbackId, handler: replyHandler)
-        plugin?.notifyListeners("messageReceivedWithReply", data: [
+        plugin?.storePendingReply(callbackId: callbackId, watchRequestId: watchRequestId, handler: replyHandler)
+        var eventData: [String: Any] = [
             "message": message,
             "callbackId": callbackId
-        ])
+        ]
+        if let watchRequestId {
+            eventData["watchRequestId"] = watchRequestId
+        }
+        plugin?.notifyListeners("messageReceivedWithReply", data: eventData)
     }
 
     // MARK: - Application context
