@@ -458,11 +458,11 @@ The phone plugin calls `CapabilityClient.getCapability("capgo_watch", FILTER_ALL
 
 Use a `WearableListenerService` so the watch receives messages and data items while the app is in the background.
 
-`wear/src/main/AndroidManifest.xml`:
+`wear/src/main/AndroidManifest.xml` (relative name assumes the Wear module namespace is `com.example.app` and the listener class lives in package `com.example.app.wear`, as in Step 5):
 
 ```xml
 <service
-    android:name=".CapgoWearListenerService"
+    android:name=".wear.CapgoWearListenerService"
     android:exported="true">
     <intent-filter>
         <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
@@ -554,7 +554,7 @@ class CapgoWearListenerService : WearableListenerService() {
     override fun onDataChanged(dataEvents: DataEventBuffer) {
         dataEvents.forEach { event ->
             if (event.type != DataEvent.TYPE_CHANGED) return@forEach
-            val dataItem = event.dataItem
+            val dataItem = event.dataItem.freeze()
             wearExecutor.execute {
                 val path = dataItem.uri.path ?: return@execute
                 val payload = parsePayload(dataItem) ?: return@execute
@@ -651,7 +651,7 @@ class CapgoWearListenerService : WearableListenerService() {
     }
 
     override fun onDestroy() {
-        wearExecutor.shutdownNow()
+        wearExecutor.shutdown()
         super.onDestroy()
     }
 
@@ -774,10 +774,9 @@ suspend fun requestFromPhone(context: android.content.Context, data: JSONObject)
     if (nodes.isEmpty()) {
         throw IllegalStateException("No connected Wear OS node")
     }
-    if (!data.has("watchRequestId")) {
-        data.put("watchRequestId", java.util.UUID.randomUUID().toString())
-    }
-    val payload = data.toString().toByteArray(Charsets.UTF_8)
+    val outbound = JSONObject(data.toString())
+    outbound.put("watchRequestId", java.util.UUID.randomUUID().toString())
+    val payload = outbound.toString().toByteArray(Charsets.UTF_8)
     nodes.forEach { node ->
         messageClient.sendMessage(node.id, CapgoWearPaths.MESSAGE_WITH_REPLY, payload).await()
     }

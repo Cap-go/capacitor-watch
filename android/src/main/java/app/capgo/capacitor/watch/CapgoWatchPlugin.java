@@ -242,7 +242,7 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     private void scheduleApplicationContextDelivery(final Uri itemUri, final JSObject contextData) {
-        final String claimKey = itemUri.toString();
+        final String claimKey = itemUri + "#" + contextData.toString();
         if (!contextDeliveryClaims.add(claimKey)) {
             return;
         }
@@ -298,17 +298,8 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
         try {
-            String localId = cachedLocalNodeId;
-            if (localId == null) {
-                localId = resolveLocalNodeIdWithRetry();
-                if (localId == null) {
-                    schedulePendingContextScanRetry(attempt, backoffMs);
-                    return;
-                }
-                cachedLocalNodeId = localId;
-            }
-            final Uri uri = Uri.parse("wear://" + localId + PATH_CONTEXT);
-            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(uri));
+            final Uri uri = Uri.parse("wear://*" + PATH_CONTEXT);
+            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(uri, DataClient.FILTER_LITERAL));
             try {
                 for (final DataItem item : buffer) {
                     if (pluginDestroyed) {
