@@ -1,8 +1,13 @@
 import type { PluginListenerHandle } from '@capacitor/core';
 
 /**
- * Data that can be sent between iPhone and Apple Watch.
+ * JSON-serializable payload sent between the phone app and the watch companion app.
+ * On iOS this crosses WatchConnectivity between iPhone and Apple Watch.
+ * On Android this crosses the Wear OS Data Layer between the phone and Wear OS app.
  * Values must be serializable (string, number, boolean, arrays, or nested objects).
+ *
+ * **iOS:** Do not use `null` anywhere in the payload (including nested arrays or objects).
+ * WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the session rejects.
  *
  * @since 8.0.0
  */
@@ -42,7 +47,8 @@ export interface UpdateContextOptions {
 export interface TransferUserInfoOptions {
   /**
    * The user info data to transfer.
-   * Transfers are queued and delivered in order.
+   * Transfers are queued for delivery. iOS delivers transfers in order.
+   * Android Data Layer transfers use separate paths and do not guarantee ordering.
    */
   userInfo: WatchMessageData;
 }
@@ -59,6 +65,7 @@ export interface ReplyMessageOptions {
   callbackId: string;
   /**
    * The reply data to send back to the watch.
+   * If the event included `watchRequestId`, include the same key here so the watch can correlate.
    */
   data: WatchMessageData;
 }
@@ -126,6 +133,13 @@ export interface MessageReceivedWithReplyEvent {
    * The callback ID to use when replying with replyToMessage().
    */
   callbackId: string;
+  /**
+   * When the watch included `watchRequestId` in the request, the same value is exposed here.
+   * The phone should echo it in `replyToMessage` data so the watch can match the reply.
+   *
+   * @since 8.1.19
+   */
+  watchRequestId?: string | number | boolean;
 }
 
 /**
@@ -226,7 +240,8 @@ export interface CapgoWatchPlugin {
 
   /**
    * Transfer user info to the watch.
-   * Transfers are queued and delivered in order, even if the watch is not currently reachable.
+   * Transfers are queued for delivery, even if the watch is not currently reachable.
+   * iOS delivers transfers in order. Android Data Layer transfers use separate paths and do not guarantee ordering.
    * Use this for important data that must be delivered reliably.
    *
    * @param options - The user info options

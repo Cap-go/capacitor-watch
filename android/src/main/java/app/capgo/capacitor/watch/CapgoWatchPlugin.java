@@ -14,6 +14,7 @@ import com.google.android.gms.wearable.DataClient;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.DataItem;
+import com.google.android.gms.wearable.DataItemBuffer;
 import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.MessageClient;
@@ -25,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -51,7 +53,7 @@ import org.json.JSONObject;
 public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
-    private static final String PLUGIN_VERSION = "8.0.25";
+    private static final String PLUGIN_VERSION = "8.1.19";
 
     /** Capability advertised by the companion Wear OS app. */
     static final String WATCH_APP_CAPABILITY = "capgo_watch";
@@ -70,14 +72,33 @@ public class CapgoWatchPlugin extends Plugin {
     /** Pending reply callbacks expire after 5 minutes. */
     private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
 
+    private static final int LOCAL_NODE_LOOKUP_MAX_ATTEMPTS = 4;
+    private static final long LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS = 100L;
+    private static final long LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS = 2000L;
+
+    private static final int PENDING_USER_INFO_SCAN_MAX_ATTEMPTS = 4;
+    private static final long PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS = 200L;
+    private static final long PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS = 2000L;
+
     /** Maps callbackId to pending reply metadata. */
     private final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
+
+    /** URIs currently being delivered to avoid duplicate userInfoReceived events. */
+    private final Set<String> userInfoDeliveryClaims = ConcurrentHashMap.newKeySet();
+
+    /** URIs currently being delivered to avoid duplicate applicationContextReceived events. */
+    private final Set<String> contextDeliveryClaims = ConcurrentHashMap.newKeySet();
 
     /** Shared thread pool for all background Wear OS operations. */
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
     private MessageClient messageClient;
     private DataClient dataClient;
+
+    private volatile boolean pluginDestroyed;
+
+    /** Cached Wear local node id; stable for the process lifetime. */
+    private volatile String cachedLocalNodeId;
 
     private final MessageClient.OnMessageReceivedListener messageListener = this::handleMessageReceived;
     private final DataClient.OnDataChangedListener dataListener = this::handleDataChanged;
@@ -86,23 +107,30 @@ public class CapgoWatchPlugin extends Plugin {
 
         final String nodeId;
         final long createdAt;
+        /** Echoed from the watch request payload when present (JSON value). */
+        final Object watchRequestEcho;
 
-        PendingReply(final String nodeId, final long createdAt) {
+        PendingReply(final String nodeId, final long createdAt, final Object watchRequestEcho) {
             this.nodeId = nodeId;
             this.createdAt = createdAt;
+            this.watchRequestEcho = watchRequestEcho;
         }
     }
 
     @Override
     public void load() {
+        pluginDestroyed = false;
         messageClient = Wearable.getMessageClient(getContext());
         dataClient = Wearable.getDataClient(getContext());
         messageClient.addListener(messageListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register message listener", e));
         dataClient.addListener(dataListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register data listener", e));
+        scanPendingUserInfoItems();
+        scanPendingContextItems();
     }
 
     @Override
     protected void handleOnDestroy() {
+        pluginDestroyed = true;
         if (messageClient != null) {
             messageClient.removeListener(messageListener);
         }
@@ -110,6 +138,19 @@ public class CapgoWatchPlugin extends Plugin {
             dataClient.removeListener(dataListener);
         }
         executor.shutdown();
+    }
+
+    @Override
+    @PluginMethod(returnType = PluginMethod.RETURN_NONE)
+    public void addListener(final PluginCall call) {
+        super.addListener(call);
+        final String eventName = call.getString("eventName");
+        if ("userInfoReceived".equals(eventName)) {
+            scanPendingUserInfoItems();
+        }
+        if ("applicationContextReceived".equals(eventName)) {
+            scanPendingContextItems();
+        }
     }
 
     private void expirePendingReplies() {
@@ -142,11 +183,15 @@ public class CapgoWatchPlugin extends Plugin {
 
             if (PATH_MESSAGE_WITH_REPLY.equals(path)) {
                 final String callbackId = UUID.randomUUID().toString();
-                pendingReplies.put(callbackId, new PendingReply(nodeId, System.currentTimeMillis()));
+                final Object watchRequestEcho = json.has("watchRequestId") ? json.get("watchRequestId") : null;
+                pendingReplies.put(callbackId, new PendingReply(nodeId, System.currentTimeMillis(), watchRequestEcho));
 
                 final JSObject evt = new JSObject();
                 evt.put("message", messageData);
                 evt.put("callbackId", callbackId);
+                if (watchRequestEcho != null) {
+                    evt.put("watchRequestId", watchRequestEcho);
+                }
                 notifyListeners("messageReceivedWithReply", evt);
             } else {
                 final JSObject evt = new JSObject();
@@ -178,19 +223,17 @@ public class CapgoWatchPlugin extends Plugin {
 
             try {
                 final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                final String payload = dataMap.getString("payload", "{}");
+                final String payload = dataMap.getString("payload", null);
+                if (payload == null) {
+                    continue;
+                }
                 final JSONObject json = new JSONObject(payload);
                 final JSObject data = new JSObject(json.toString());
 
                 if (isContext) {
-                    final JSObject evt = new JSObject();
-                    evt.put("context", data);
-                    notifyListeners("applicationContextReceived", evt);
+                    scheduleApplicationContextDelivery(item.getUri(), data);
                 } else {
-                    final JSObject evt = new JSObject();
-                    evt.put("userInfo", data);
-                    notifyListeners("userInfoReceived", evt);
-                    deleteDataItem(item.getUri());
+                    scheduleUserInfoDelivery(item, data);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Error processing data change", e);
@@ -198,11 +241,290 @@ public class CapgoWatchPlugin extends Plugin {
         }
     }
 
-    private void deleteDataItem(final Uri uri) {
+    private void scheduleApplicationContextDelivery(final Uri itemUri, final JSObject contextData) {
+        final String claimKey = itemUri + "#" + contextData.toString();
+        if (!contextDeliveryClaims.add(claimKey)) {
+            return;
+        }
+        executor.execute(() -> {
+            boolean bridgeTaskPosted = false;
+            try {
+                if (pluginDestroyed) {
+                    return;
+                }
+                String localId = cachedLocalNodeId;
+                if (localId == null) {
+                    localId = resolveLocalNodeIdWithRetry();
+                    if (localId == null) {
+                        schedulePendingContextScanRetry(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS);
+                        return;
+                    }
+                    cachedLocalNodeId = localId;
+                }
+                final String itemHost = itemUri.getHost();
+                if (itemHost != null && localId.equals(itemHost)) {
+                    return;
+                }
+                execute(() -> deliverApplicationContextFromRemote(itemUri, contextData, claimKey));
+                bridgeTaskPosted = true;
+            } finally {
+                if (!bridgeTaskPosted) {
+                    contextDeliveryClaims.remove(claimKey);
+                }
+            }
+        });
+    }
+
+    private void deliverApplicationContextFromRemote(final Uri itemUri, final JSObject contextData, final String claimKey) {
+        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
+            contextDeliveryClaims.remove(claimKey);
+            return;
+        }
+        final JSObject evt = new JSObject();
+        evt.put("context", contextData);
+        notifyListeners("applicationContextReceived", evt);
+        contextDeliveryClaims.remove(claimKey);
+    }
+
+    private void scanPendingContextItems() {
         if (dataClient == null) {
             return;
         }
-        dataClient.deleteDataItems(uri).addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e));
+        executor.execute(() -> scanPendingContextItemsAttempt(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS));
+    }
+
+    private void scanPendingContextItemsAttempt(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
+            return;
+        }
+        try {
+            final Uri uri = Uri.parse("wear://*" + PATH_CONTEXT);
+            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(uri, DataClient.FILTER_LITERAL));
+            try {
+                for (final DataItem item : buffer) {
+                    if (pluginDestroyed) {
+                        return;
+                    }
+                    final String path = item.getUri().getPath();
+                    if (path == null || !PATH_CONTEXT.equals(path)) {
+                        continue;
+                    }
+                    try {
+                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                        final String payload = dataMap.getString("payload", null);
+                        if (payload == null) {
+                            continue;
+                        }
+                        final JSONObject json = new JSONObject(payload);
+                        final JSObject data = new JSObject(json.toString());
+                        scheduleApplicationContextDelivery(item.getUri(), data);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error scanning pending context DataItem", e);
+                    }
+                }
+            } finally {
+                buffer.release();
+            }
+        } catch (ExecutionException | InterruptedException e) {
+            Log.w(TAG, "Failed to scan pending context DataItems", e);
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            schedulePendingContextScanRetry(attempt, backoffMs);
+        }
+    }
+
+    private void schedulePendingContextScanRetry(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
+            return;
+        }
+        if (attempt + 1 >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
+            Log.w(TAG, "Context delivery pending scan exhausted retries");
+            return;
+        }
+        final int nextAttempt = attempt + 1;
+        final long nextBackoffMs = Math.min(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS);
+        executor.execute(() -> {
+            if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
+                return;
+            }
+            try {
+                Thread.sleep(backoffMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
+                return;
+            }
+            scanPendingContextItemsAttempt(nextAttempt, nextBackoffMs);
+        });
+    }
+
+    private void scheduleUserInfoDelivery(final DataItem item, final JSObject userInfoPayload) {
+        final Uri itemUri = item.getUri();
+        final String claimKey = itemUri.toString();
+        if (!userInfoDeliveryClaims.add(claimKey)) {
+            return;
+        }
+        final String itemHost = itemUri.getHost();
+        executor.execute(() -> {
+            boolean bridgeTaskPosted = false;
+            try {
+                if (pluginDestroyed) {
+                    return;
+                }
+                String localId = cachedLocalNodeId;
+                if (localId == null) {
+                    localId = resolveLocalNodeIdWithRetry();
+                    if (localId == null) {
+                        return;
+                    }
+                    cachedLocalNodeId = localId;
+                }
+                if (localId.equals(itemHost)) {
+                    return;
+                }
+                execute(() -> deliverUserInfoFromRemote(itemUri, userInfoPayload, claimKey));
+                bridgeTaskPosted = true;
+            } finally {
+                if (!bridgeTaskPosted) {
+                    userInfoDeliveryClaims.remove(claimKey);
+                }
+            }
+        });
+    }
+
+    private void deliverUserInfoFromRemote(final Uri itemUri, final JSObject userInfoPayload, final String claimKey) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            userInfoDeliveryClaims.remove(claimKey);
+            return;
+        }
+        final JSObject evt = new JSObject();
+        evt.put("userInfo", userInfoPayload);
+        notifyListeners("userInfoReceived", evt);
+        deleteDataItem(itemUri, () -> userInfoDeliveryClaims.remove(claimKey));
+    }
+
+    private void scanPendingUserInfoItems() {
+        if (dataClient == null) {
+            return;
+        }
+        executor.execute(() -> scanPendingUserInfoItemsAttempt(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS));
+    }
+
+    private void scanPendingUserInfoItemsAttempt(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            return;
+        }
+        try {
+            final Uri prefix = Uri.parse("wear://*" + PATH_USER_INFO);
+            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(prefix, DataClient.FILTER_PREFIX));
+            try {
+                for (final DataItem item : buffer) {
+                    if (pluginDestroyed) {
+                        return;
+                    }
+                    final String path = item.getUri().getPath();
+                    if (path == null || !path.startsWith(PATH_USER_INFO)) {
+                        continue;
+                    }
+                    try {
+                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
+                        final String payload = dataMap.getString("payload", null);
+                        if (payload == null) {
+                            continue;
+                        }
+                        final JSONObject json = new JSONObject(payload);
+                        final JSObject data = new JSObject(json.toString());
+                        scheduleUserInfoDelivery(item, data);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error scanning pending user info DataItem", e);
+                    }
+                }
+            } finally {
+                buffer.release();
+            }
+        } catch (ExecutionException | InterruptedException e) {
+            Log.w(TAG, "Failed to scan pending user info DataItems", e);
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            schedulePendingUserInfoScanRetry(attempt, backoffMs);
+        }
+    }
+
+    private void schedulePendingUserInfoScanRetry(final int attempt, final long backoffMs) {
+        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+            return;
+        }
+        if (attempt + 1 >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
+            Log.w(TAG, "Pending user info scan exhausted retries");
+            return;
+        }
+        final int nextAttempt = attempt + 1;
+        final long nextBackoffMs = Math.min(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS);
+        executor.execute(() -> {
+            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+                return;
+            }
+            try {
+                Thread.sleep(backoffMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
+                return;
+            }
+            scanPendingUserInfoItemsAttempt(nextAttempt, nextBackoffMs);
+        });
+    }
+
+    /**
+     * Resolves the local Wear node id, retrying transient {@link ExecutionException} failures.
+     */
+    private String resolveLocalNodeIdWithRetry() {
+        long backoffMs = LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS;
+        ExecutionException lastFailure = null;
+        for (int attempt = 0; attempt < LOCAL_NODE_LOOKUP_MAX_ATTEMPTS; attempt++) {
+            try {
+                return Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                Log.w(TAG, "Could not resolve local node for user info filter", e);
+                return null;
+            } catch (ExecutionException e) {
+                lastFailure = e;
+                if (attempt + 1 >= LOCAL_NODE_LOOKUP_MAX_ATTEMPTS) {
+                    break;
+                }
+                Log.w(TAG, "Local node lookup failed, retrying", e);
+                try {
+                    Thread.sleep(backoffMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    Log.w(TAG, "Could not resolve local node for user info filter", ie);
+                    return null;
+                }
+                backoffMs = Math.min(backoffMs * 2, LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS);
+            }
+        }
+        Log.w(TAG, "Could not resolve local node for user info filter", lastFailure);
+        return null;
+    }
+
+    private void deleteDataItem(final Uri uri, final Runnable onComplete) {
+        if (dataClient == null) {
+            onComplete.run();
+            return;
+        }
+        dataClient
+            .deleteDataItems(uri)
+            .addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e))
+            .addOnCompleteListener((task) -> onComplete.run());
     }
 
     // ── Plugin methods ────────────────────────────────────────────────────────
@@ -304,7 +626,17 @@ public class CapgoWatchPlugin extends Plugin {
         }
 
         final String nodeId = pendingReply.nodeId;
-        final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] payload;
+        try {
+            final JSONObject merged = new JSONObject(data.toString());
+            if (pendingReply.watchRequestEcho != null) {
+                merged.put("watchRequestId", pendingReply.watchRequestEcho);
+            }
+            payload = merged.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (JSONException e) {
+            call.reject("Invalid reply data");
+            return;
+        }
         final String replyPath = PATH_REPLY + callbackId;
         executor.execute(() -> {
             try {
