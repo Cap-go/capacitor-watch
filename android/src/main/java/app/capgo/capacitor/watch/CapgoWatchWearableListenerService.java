@@ -91,11 +91,7 @@ public class CapgoWatchWearableListenerService extends WearableListenerService {
                 }
 
                 final CapgoWatchMessagePayload.ReplyEnvelope envelope = CapgoWatchMessagePayload.parseReplyEnvelope(json);
-                if (!CapgoWatchPlugin.registerPendingReply(
-                    envelope.callbackId,
-                    event.getSourceNodeId(),
-                    envelope.watchRequestId
-                )) {
+                if (!CapgoWatchPlugin.registerPendingReply(envelope.callbackId, event.getSourceNodeId(), envelope.watchRequestId)) {
                     // Capacity rejected: settle watch and do not emit an unrepliable event
                     // (avoids queue/replay reconstructing a callback without a durable record).
                     Log.w(TAG, "Skipping messageReceivedWithReply; pending-reply capacity full");
