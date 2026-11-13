@@ -52,7 +52,6 @@ public class CapgoWatchPlugin extends Plugin {
         this.executor = executor;
     }
 
-
     private CapgoWatchPendingReplyManager pendingReplyManager;
     private MessageClient messageClient;
     private DataClient dataClient;
