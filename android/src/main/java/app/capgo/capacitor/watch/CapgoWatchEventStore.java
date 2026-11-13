@@ -112,7 +112,7 @@ public class CapgoWatchEventStore {
                 Log.e(TAG, "Failed to persist reachabilityChanged event", e);
                 return false;
             }
-            // Event commit succeeded — PREF write is best-effort so callers still drain.
+            // Event commit succeeded. PREF write is best-effort so callers still drain.
             forceSaveLastReachableUnlocked(isReachable);
             return true;
         }
@@ -196,7 +196,7 @@ public class CapgoWatchEventStore {
      * <p>Age-expired entries are pruned first. When the store is already at
      * {@link CapgoWatchConstants#MAX_PENDING_REPLIES}, the new registration is
      * rejected (existing durable callbacks are preserved). Callers must explicitly
-     * reject/expire the rejected request — never silently drop older mappings.
+     * reject/expire the rejected request. Never silently drop older mappings.
      *
      * @return {@code true} when the registration was persisted
      */

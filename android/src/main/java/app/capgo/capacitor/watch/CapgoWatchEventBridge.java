@@ -43,7 +43,7 @@ public final class CapgoWatchEventBridge {
         if (eventStore != null) {
             return eventStore.savePendingReply(callbackId, nodeId, watchRequestEcho);
         }
-        // No durable queue — accept, matching PendingReplyManager when eventStore is null.
+        // No durable queue. Accept, matching PendingReplyManager when eventStore is null.
         return true;
     }
 

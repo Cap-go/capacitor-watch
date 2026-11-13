@@ -380,7 +380,7 @@ enum CapgoWatchMessageConverter {
         return result
     }
 
-    /// Reject NSNull — WCSession property lists cannot carry null, and silently
+    /// Reject NSNull. WCSession property lists cannot carry null, and silently
     /// dropping null array elements would shift indices.
     private static func convertJSValue(_ value: Any) throws -> Any {
         if value is NSNull {

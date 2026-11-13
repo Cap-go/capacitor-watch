@@ -250,7 +250,7 @@ public class CapgoWatchEventStoreTest {
         final JSObject offline = new JSObject();
         offline.put("isReachable", false);
         assertTrue(store.appendReachabilityIfAbsent(false, offline));
-        // Same value already queued — returns false without duplicating.
+        // Same value already queued. Returns false without duplicating.
         assertFalse(store.appendReachabilityIfAbsent(false, offline));
         assertEquals(1, store.drainEventsFor("reachabilityChanged").size());
     }

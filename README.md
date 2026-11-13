@@ -41,6 +41,16 @@ We build, improve and fix our plugins with heavy use of AI, so issues usually ge
 - **Phone to watch replies**: `sendMessage({ data, expectsReply: true })` waits for a watch reply on both iOS and Android.
 - **Platforms**: iOS and Android. **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly). **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android, plus a Kotlin watch-side SDK in `watch-sdk/wearos`. Not available on web.
 
+## Phone to watch replies and getReceivedState
+
+This update adds two phone-side APIs, plus Wear OS support that was missing from earlier docs:
+
+- **Phone to watch replies.** Call `sendMessage({ data, expectsReply: true })`. The promise resolves with `{ reply }` after the watch responds, on both iOS and Android.
+- **`getReceivedState()`.** Returns the last application context received from the watch, even if you missed the `applicationContextReceived` event.
+- **Wear OS Kotlin SDK and background replay.** The watch-side SDK lives in `watch-sdk/wearos`. Incoming Wear OS events are persisted on the phone and replayed when JavaScript listeners are ready.
+
+Guide: [Phone to watch replies and received state](https://capgo.app/docs/plugins/watch/getting-started/#phone-to-watch-replies-and-received-state) on the Capgo docs. Plugin overview: https://capgo.app/docs/plugins/watch/
+
 ## Why Capacitor Watch?
 
 The Capacitor 8 plugin for **bidirectional watch communication on iOS and Android**:
@@ -1546,7 +1556,9 @@ WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the sess
 
 Construct a type with a set of properties K of type T
 
-<code>{ [P in K]: T; }</code>
+<code>{
+ [P in K]: T;
+ }</code>
 
 </docgen-api>
 

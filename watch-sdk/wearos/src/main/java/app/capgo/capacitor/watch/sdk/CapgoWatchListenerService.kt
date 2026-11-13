@@ -306,7 +306,7 @@ class CapgoWatchListenerService : WearableListenerService() {
             try {
                 persistExecutor.submit(task).get(5, TimeUnit.SECONDS)
             } catch (e: Exception) {
-                // Executor shut down or timed out — fall back to inline commit.
+                // Executor shut down or timed out. Fall back to inline commit.
                 Log.w(TAG, "Sync URI persist via executor failed; committing inline", e)
                 commitPendingUrisSnapshot(payload, generation)
             }
