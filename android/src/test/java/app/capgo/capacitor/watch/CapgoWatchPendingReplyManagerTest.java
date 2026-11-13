@@ -104,6 +104,8 @@ public class CapgoWatchPendingReplyManagerTest {
 
     @Test
     public void registerIncomingKeepsWatchRequestEchoAcrossRestore() {
+        manager = new CapgoWatchPendingReplyManager(300_000L);
+        manager.initialize(null, eventStore);
         assertTrue(manager.registerIncoming("callback-echo", "node-echo", "req-42"));
         final CapgoWatchPendingReplyManager.IncomingPendingReply live = manager.getIncoming("callback-echo");
         assertNotNull(live);
