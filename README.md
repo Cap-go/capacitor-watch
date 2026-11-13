@@ -37,8 +37,19 @@ We build, improve and fix our plugins with heavy use of AI, so issues usually ge
 - **Shared state**: `updateApplicationContext()` syncs the latest state to the watch (latest-value semantics via `applicationContextReceived`)
 - **Background transfer**: `transferUserInfo()` queues data for reliable delivery (`userInfoReceived`)
 - **Events**: message, application context and user info listeners, plus reachability and activation listeners on iOS
-- **Status**: `getInfo()` reports pairing, reachability, companion app detection, and support
-- **Platforms**: iOS and Android. **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly). **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android. Not available on web.
+- **Status**: `getInfo()` reports pairing, reachability, companion app detection, and support. `getReceivedState()` returns the last application context received from the watch.
+- **Phone to watch replies**: `sendMessage({ data, expectsReply: true })` waits for a watch reply on both iOS and Android.
+- **Platforms**: iOS and Android. **Apple Watch**: WatchConnectivity on iOS plus **CapgoWatchSDK** for watchOS (SwiftUI-friendly). **Wear OS**: Google Play services **Wearable Data Layer** (`play-services-wearable`) on Android, plus a Kotlin watch-side SDK in `watch-sdk/wearos`. Not available on web.
+
+## Phone to watch replies and getReceivedState
+
+This update adds two phone-side APIs, plus Wear OS support that was missing from earlier docs:
+
+- **Phone to watch replies.** Call `sendMessage({ data, expectsReply: true })`. The promise resolves with `{ reply }` after the watch responds, on both iOS and Android.
+- **`getReceivedState()`.** Returns the last application context received from the watch, even if you missed the `applicationContextReceived` event.
+- **Wear OS Kotlin SDK and background replay.** The watch-side SDK lives in `watch-sdk/wearos`. Incoming Wear OS events are persisted on the phone and replayed when JavaScript listeners are ready.
+
+Guide: [Phone to watch replies and received state](https://capgo.app/docs/plugins/watch/getting-started/#phone-to-watch-replies-and-received-state) on the Capgo docs. Plugin overview: https://capgo.app/docs/plugins/watch/
 
 ## Why Capacitor Watch?
 
@@ -49,7 +60,8 @@ The Capacitor 8 plugin for **bidirectional watch communication on iOS and Androi
 - **User info transfers** - Reliable queued delivery when the watch is not immediately reachable
 - **Request/reply pattern** - Interactive workflows with callback-based responses
 - **SwiftUI ready** - Includes watch-side SDK with ObservableObject support for Apple Watch
-- **Wear OS ready** - Documented Data Layer paths and capability name match the native Android implementation
+- **Wear OS SDK** - Kotlin watch-side SDK in `watch-sdk/wearos` (`CapgoWatch`, listeners, and `WearableListenerService`)
+- **Background replay** - Incoming Wear OS events are persisted on the phone and replayed when JavaScript listeners are ready
 
 Essential for health apps, fitness trackers, remote controls, and any Capacitor app that extends to Apple Watch or Wear OS.
 
@@ -94,7 +106,7 @@ npx cap sync
 - **iOS**: iOS 15.0+ (Capacitor 8 minimum). WatchConnectivity capability on the iPhone app.
 - **watchOS**: watchOS 9.0+. Companion watch app with **CapgoWatchSDK** (see [Apple Watch setup guide](#apple-watch-setup-guide)).
 - **Android (phone)**: API **24+** (`minSdkVersion` 24 in the plugin `android/build.gradle`). **Google Play services** with Wear OS support. A **paired Wear OS** device or emulator with the companion watch module installed.
-- **Wear OS (watch module)**: Same **`applicationId`** as the phone app, signed with the same key. Gradle dependency `com.google.android.gms:play-services-wearable:20.0.1` (same version as the plugin). Advertise capability **`capgo_watch`** so `getInfo().isWatchAppInstalled` works.
+- **Wear OS (watch module)**: Same **`applicationId`** as the phone app, signed with the same key. Gradle dependency `com.google.android.gms:play-services-wearable:20.0.1` (same version as the plugin). Advertise capability **`capgo_watch`** so `getInfo().isWatchAppInstalled` works. You can change the capability name with `plugins.CapgoWatch.capability` in `capacitor.config.ts`. Prefer the Kotlin SDK in `watch-sdk/wearos` (see `watch-sdk/wearos/README.md`).
 - **Hardware**: Real Apple Watch recommended for iOS (simulators do not support WatchConnectivity). Wear OS can be tested on emulators with phone + watch pairing.
 
 ## Platform support
@@ -103,17 +115,18 @@ Methods and events below reflect the current **iOS** (`CapgoWatchPlugin.swift`),
 
 | API | iOS / Apple Watch | Android / Wear OS | Web |
 | --- | --- | --- | --- |
-| `sendMessage` | Yes. Watch must be **reachable** (`WCSession.isReachable`). | Yes. Sends on MessageClient path `/capgo/message` to **all connected** nodes; rejects if none. Does not mirror iOS reachability checks before send. | Throws `unavailable` |
+| `sendMessage` | Yes. Watch must be **reachable** (`WCSession.isReachable`). `expectsReply: true` waits for a watch reply. | Yes. Path `/capgo/message`, or `/capgo/message/withreply` when `expectsReply` is true. Sends to **all connected** nodes; rejects if none. | Throws `unavailable` |
 | `updateApplicationContext` | Yes. `WCSession.updateApplicationContext`. | Yes. DataItem path `/capgo/context`, map key `payload` (JSON string). | Throws `unavailable` |
 | `transferUserInfo` | Yes. Queued `transferUserInfo`. | Yes. DataItem path `/capgo/userinfo/{uuid}`, map key `payload`. | Throws `unavailable` |
 | `replyToMessage` | Yes. Completes the WatchConnectivity reply handler. | Yes. MessageClient path `/capgo/reply/{callbackId}` to the originating node. Pending replies expire after **5 minutes**. | Throws `unavailable` |
 | `getInfo` | Yes. WCSession pairing, install, reachability, activation. | Yes. Connected nodes, capability **`capgo_watch`**, `activationState` **2** if any node connected else **0**. Returns unsupported defaults if Play services fails. | Always unsupported defaults |
+| `getReceivedState` | Yes. Last `receivedApplicationContext`. | Yes. Last persisted application context DataItem. | Resolves `{ context: null }` |
 | `getPluginVersion` | Yes | Yes | Yes (`version: "web"`) |
 | `messageReceived` | Yes | Yes. Incoming `/capgo/message` (JSON body). | Listener API only; no events |
 | `messageReceivedWithReply` | Yes | Yes. Incoming `/capgo/message/withreply`; phone generates `callbackId`. | Listener API only; no events |
 | `applicationContextReceived` | Yes | Yes. DataItem `/capgo/context`. | Listener API only; no events |
 | `userInfoReceived` | Yes | Yes. DataItem `/capgo/userinfo/*`; phone **deletes** the item after handling. | Listener API only; no events |
-| `reachabilityChanged` | Yes | **Not emitted** (poll `getInfo()`). | **Not emitted** |
+| `reachabilityChanged` | Yes | Yes. Emitted when connected Wear OS nodes change (`{ isReachable }`). | **Not emitted** |
 | `activationStateChanged` | Yes (WCSession states 0/1/2) | **Not emitted** | **Not emitted** |
 
 **Wear OS Data Layer paths** (phone plugin and watch app must use the same strings):
@@ -406,6 +419,10 @@ Use the target dropdown in Xcode to switch between building for your phone or wa
 ## Wear OS setup guide
 
 This guide mirrors the Apple Watch tutorial: add a **Wear OS module** to your existing Capacitor Android app, wire the same Data Layer paths the plugin uses on the phone, and call the plugin from TypeScript on the phone.
+
+This repository also ships a Kotlin watch-side SDK in `watch-sdk/wearos` (`CapgoWatch`, `CapgoWatchListener`, and `CapgoWatchListenerService`). You can include that module in your Wear app instead of copying the snippets below. See `watch-sdk/wearos/README.md`.
+
+The capability name defaults to `capgo_watch`. Override it in the phone app with `plugins.CapgoWatch.capability` in `capacitor.config.ts`.
 
 Full reference: [Capacitor Watch docs](https://capgo.app/docs/plugins/watch/).
 
@@ -1048,10 +1065,13 @@ struct StatusView: View {
 <docgen-index>
 
 * [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(...)`](#sendmessage)
+* [`sendMessage(...)`](#sendmessage)
 * [`updateApplicationContext(...)`](#updateapplicationcontext)
 * [`transferUserInfo(...)`](#transferuserinfo)
 * [`replyToMessage(...)`](#replytomessage)
 * [`getInfo()`](#getinfo)
+* [`getReceivedState()`](#getreceivedstate)
 * [`getPluginVersion()`](#getpluginversion)
 * [`addListener('messageReceived', ...)`](#addlistenermessagereceived-)
 * [`addListener('messageReceivedWithReply', ...)`](#addlistenermessagereceivedwithreply-)
@@ -1078,18 +1098,57 @@ Provides bidirectional messaging between the phone and a paired watch.
 ### sendMessage(...)
 
 ```typescript
-sendMessage(options: SendMessageOptions) => Promise<void>
+sendMessage(options: SendMessageOptionsWithReply) => Promise<SendMessageResult>
 ```
 
 Send an interactive message to the watch.
 The watch must be reachable for this to succeed.
 Use this for time-sensitive, interactive communication.
 
+| Param         | Type                                                                                | Description           |
+| ------------- | ----------------------------------------------------------------------------------- | --------------------- |
+| **`options`** | <code><a href="#sendmessageoptionswithreply">SendMessageOptionsWithReply</a></code> | - The message options |
+
+**Returns:** <code>Promise&lt;<a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
+
+**Since:** 8.2.0
+
+--------------------
+
+
+### sendMessage(...)
+
+```typescript
+sendMessage(options: SendMessageOptions & { expectsReply?: false; }) => Promise<void>
+```
+
+Send an interactive message to the watch without waiting for a reply.
+
+| Param         | Type                                                                                          | Description                                           |
+| ------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a> & { expectsReply?: false; }</code> | - The message options (expectsReply omitted or false) |
+
+**Since:** 8.0.0
+
+--------------------
+
+
+### sendMessage(...)
+
+```typescript
+sendMessage(options: SendMessageOptions) => Promise<void | SendMessageResult>
+```
+
+Send an interactive message when `expectsReply` is not known statically.
+Prefer the overloads above when `expectsReply` is a boolean literal.
+
 | Param         | Type                                                              | Description           |
 | ------------- | ----------------------------------------------------------------- | --------------------- |
 | **`options`** | <code><a href="#sendmessageoptions">SendMessageOptions</a></code> | - The message options |
 
-**Since:** 8.0.0
+**Returns:** <code>Promise&lt;void | <a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
+
+**Since:** 8.2.0
 
 --------------------
 
@@ -1162,6 +1221,22 @@ Get information about the watch connectivity status.
 **Returns:** <code>Promise&lt;<a href="#watchinfo">WatchInfo</a>&gt;</code>
 
 **Since:** 8.0.0
+
+--------------------
+
+
+### getReceivedState()
+
+```typescript
+getReceivedState() => Promise<ReceivedState>
+```
+
+Get the last persisted application context received from the watch.
+Useful after app restart to restore watch-synced state without waiting for a new event.
+
+**Returns:** <code>Promise&lt;<a href="#receivedstate">ReceivedState</a>&gt;</code>
+
+**Since:** 8.2.0
 
 --------------------
 
@@ -1317,13 +1392,33 @@ Remove all listeners for this plugin.
 ### Interfaces
 
 
+#### SendMessageResult
+
+Result returned when `sendMessage` is called with `expectsReply: true`.
+
+| Prop        | Type                                                                  | Description                                                                   |
+| ----------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **`reply`** | <code><a href="#watchmessagedata">WatchMessageData</a> \| null</code> | Reply payload from the watch, or null when the watch returned an empty reply. |
+
+
+#### SendMessageOptionsWithReply
+
+Options for sending a message that expects a reply from the watch.
+
+| Prop               | Type                                                          | Description                                                                                               |
+| ------------------ | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects). |
+| **`expectsReply`** | <code>true</code>                                             | Must be `true` for this overload. The promise resolves with `{ reply }` after the watch responds.         |
+
+
 #### SendMessageOptions
 
 Options for sending a message to the watch.
 
-| Prop       | Type                                                          | Description                                                                                               |
-| ---------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| **`data`** | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects). |
+| Prop               | Type                                                          | Description                                                                                                                     | Default            | Since |
+| ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
+| **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects).                       |                    |       |
+| **`expectsReply`** | <code>boolean</code>                                          | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). | <code>false</code> | 8.2.0 |
 
 
 #### UpdateContextOptions
@@ -1365,6 +1460,15 @@ Information about Watch / Wear OS connectivity status.
 | **`isWatchAppInstalled`** | <code>boolean</code> | Whether the watch companion app is installed. - iOS: whether the paired Apple Watch has the companion app installed. - Android: whether at least one connected Wear OS node is reachable (used as a proxy).                                                   |
 | **`isReachable`**         | <code>boolean</code> | Whether the watch is currently reachable for immediate messaging.                                                                                                                                                                                             |
 | **`activationState`**     | <code>number</code>  | The current session activation state. - iOS: 0 = notActivated, 1 = inactive, 2 = activated (WCSessionActivationState). - Android: 2 when a Wear OS node is connected, 0 otherwise.                                                                            |
+
+
+#### ReceivedState
+
+Last persisted application context received from the watch.
+
+| Prop          | Type                                                                  | Description                                                                      |
+| ------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **`context`** | <code><a href="#watchmessagedata">WatchMessageData</a> \| null</code> | The last application context received from the watch, or null if none is stored. |
 
 
 #### PluginListenerHandle
@@ -1439,6 +1543,8 @@ JSON-serializable payload sent between the phone app and the watch companion app
 On iOS this crosses WatchConnectivity between iPhone and Apple Watch.
 On Android this crosses the Wear OS Data Layer between the phone and Wear OS app.
 Values must be serializable (string, number, boolean, arrays, or nested objects).
+On iOS do not use `null` in payloads (including nested values); WatchConnectivity uses
+Foundation types and rejects `NSNull`.
 
 **iOS:** Do not use `null` anywhere in the payload (including nested arrays or objects).
 WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the session rejects.

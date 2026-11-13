@@ -1,0 +1,25 @@
+// Standalone settings for CI and local `./gradlew -p watch-sdk/wearos` builds.
+// Consumer Wear OS apps should include this module from their own root and
+// supply AGP and Kotlin plugin versions there. Do not pin those versions in
+// this module's build.gradle.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    plugins {
+        id 'com.android.library' version '8.13.0'
+        id 'org.jetbrains.kotlin.android' version '2.1.21'
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'capgo-watch-sdk-wearos'

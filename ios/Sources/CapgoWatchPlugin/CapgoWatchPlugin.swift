@@ -15,12 +15,15 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "transferUserInfo", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "replyToMessage", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getInfo", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getReceivedState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getPluginVersion", returnType: CAPPluginReturnPromise)
     ]
 
     private var sessionDelegate: WatchSessionDelegate?
     private var pendingReplies: [String: (watchRequestId: Any?, handler: ([String: Any]) -> Void)] = [:]
+    private var pendingReplyTimers: [String: DispatchWorkItem] = [:]
     private let replyLock = NSLock()
+    private let pendingReplyTtlSeconds: TimeInterval = 5 * 60
 
     override public func load() {
         guard WCSession.isSupported() else {
@@ -55,7 +58,28 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let message = convertToWatchMessage(data)
+        let expectsReply = call.getBool("expectsReply") ?? false
+        let message: [String: Any]
+        do {
+            message = try CapgoWatchMessageConverter.convertToWatchMessage(data)
+        } catch {
+            call.reject("Message payload cannot contain null values")
+            return
+        }
+
+        if expectsReply {
+            WCSession.default.sendMessage(message, replyHandler: { reply in
+                let convertedReply = CapgoWatchMessageConverter.convertFromWatchMessage(reply)
+                if convertedReply.isEmpty {
+                    call.resolve(["reply": NSNull()])
+                } else {
+                    call.resolve(["reply": convertedReply])
+                }
+            }, errorHandler: { error in
+                call.reject("Failed to send message: \(error.localizedDescription)")
+            })
+            return
+        }
 
         WCSession.default.sendMessage(message, replyHandler: nil) { error in
             call.reject("Failed to send message: \(error.localizedDescription)")
@@ -80,7 +104,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchContext = convertToWatchMessage(context)
+        let watchContext: [String: Any]
+        do {
+            watchContext = try CapgoWatchMessageConverter.convertToWatchMessage(context)
+        } catch {
+            call.reject("Context payload cannot contain null values")
+            return
+        }
 
         do {
             try WCSession.default.updateApplicationContext(watchContext)
@@ -106,7 +136,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        let watchUserInfo = convertToWatchMessage(userInfo)
+        let watchUserInfo: [String: Any]
+        do {
+            watchUserInfo = try CapgoWatchMessageConverter.convertToWatchMessage(userInfo)
+        } catch {
+            call.reject("User info payload cannot contain null values")
+            return
+        }
         WCSession.default.transferUserInfo(watchUserInfo)
         call.resolve()
     }
@@ -122,8 +158,17 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
+        let replyData: [String: Any]
+        do {
+            replyData = try CapgoWatchMessageConverter.convertToWatchMessage(data)
+        } catch {
+            call.reject("Reply payload cannot contain null values")
+            return
+        }
+
         replyLock.lock()
         let pending = pendingReplies.removeValue(forKey: callbackId)
+        pendingReplyTimers.removeValue(forKey: callbackId)?.cancel()
         replyLock.unlock()
 
         guard let pending else {
@@ -131,11 +176,11 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        var replyData = convertToWatchMessage(data)
-        if let wid = pending.watchRequestId, replyData["watchRequestId"] == nil {
-            replyData["watchRequestId"] = wid
+        var finalReply = replyData
+        if let watchRequestId = pending.watchRequestId, finalReply["watchRequestId"] == nil {
+            finalReply["watchRequestId"] = watchRequestId
         }
-        pending.handler(replyData)
+        pending.handler(finalReply)
         call.resolve()
     }
 
@@ -163,6 +208,20 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         ])
     }
 
+    @objc func getReceivedState(_ call: CAPPluginCall) {
+        guard WCSession.isSupported() else {
+            call.resolve(["context": NSNull()])
+            return
+        }
+
+        let context = WCSession.default.receivedApplicationContext
+        if context.isEmpty {
+            call.resolve(["context": NSNull()])
+        } else {
+            call.resolve(["context": CapgoWatchMessageConverter.convertFromWatchMessage(context)])
+        }
+    }
+
     @objc func getPluginVersion(_ call: CAPPluginCall) {
         call.resolve(["version": pluginVersion])
     }
@@ -171,31 +230,47 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     func storePendingReply(
         callbackId: String,
-        watchRequestId: Any?,
+        watchRequestId: Any? = nil,
         handler: @escaping ([String: Any]) -> Void
     ) {
         replyLock.lock()
         pendingReplies[callbackId] = (watchRequestId: watchRequestId, handler: handler)
-        replyLock.unlock()
-    }
+        pendingReplyTimers[callbackId]?.cancel()
 
-    // MARK: - Helper methods
-
-    private func convertToWatchMessage(_ jsObject: JSObject) -> [String: Any] {
-        var result: [String: Any] = [:]
-        for (key, value) in jsObject {
-            result[key] = convertJSValue(value)
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.expirePendingReply(callbackId: callbackId)
         }
-        return result
+        pendingReplyTimers[callbackId] = workItem
+        replyLock.unlock()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + pendingReplyTtlSeconds, execute: workItem)
     }
 
-    private func convertJSValue(_ value: Any) -> Any {
-        if let dict = value as? JSObject {
-            return convertToWatchMessage(dict)
-        } else if let array = value as? JSArray {
-            return array.map { convertJSValue($0) }
-        } else {
-            return value
+    func expirePendingReply(callbackId: String) {
+        replyLock.lock()
+        let pending = pendingReplies.removeValue(forKey: callbackId)
+        pendingReplyTimers.removeValue(forKey: callbackId)
+        replyLock.unlock()
+
+        pending?.handler([:])
+    }
+
+    func notifyWatchEvent(_ eventName: String, data: [String: Any], retainUntilConsumed: Bool = true) {
+        notifyListeners(eventName, data: data, retainUntilConsumed: retainUntilConsumed)
+    }
+
+    deinit {
+        replyLock.lock()
+        let pending = pendingReplies
+        pendingReplies.removeAll()
+        for (_, task) in pendingReplyTimers {
+            task.cancel()
+        }
+        pendingReplyTimers.removeAll()
+        replyLock.unlock()
+
+        for (_, entry) in pending {
+            entry.handler([:])
         }
     }
 }
@@ -223,7 +298,7 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
         CAPLog.print("[CapgoWatch] Activation completed with state: \(activationState.rawValue)")
         plugin?.notifyListeners("activationStateChanged", data: [
             "state": activationState.rawValue
-        ])
+        ], retainUntilConsumed: true)
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {
@@ -232,23 +307,20 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
 
     func sessionDidDeactivate(_ session: WCSession) {
         CAPLog.print("[CapgoWatch] Session deactivated")
-        // Reactivate for multi-watch support
         WCSession.default.activate()
     }
 
     func sessionReachabilityDidChange(_ session: WCSession) {
         CAPLog.print("[CapgoWatch] Reachability changed: \(session.isReachable)")
-        plugin?.notifyListeners("reachabilityChanged", data: [
+        plugin?.notifyWatchEvent("reachabilityChanged", data: [
             "isReachable": session.isReachable
         ])
     }
 
-    // MARK: - Message receiving
-
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         CAPLog.print("[CapgoWatch] Received message: \(message)")
-        plugin?.notifyListeners("messageReceived", data: [
-            "message": message
+        plugin?.notifyWatchEvent("messageReceived", data: [
+            "message": CapgoWatchMessageConverter.convertFromWatchMessage(message)
         ])
     }
 
@@ -263,30 +335,73 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
 
         plugin?.storePendingReply(callbackId: callbackId, watchRequestId: watchRequestId, handler: replyHandler)
         var eventData: [String: Any] = [
-            "message": message,
+            "message": CapgoWatchMessageConverter.convertFromWatchMessage(message),
             "callbackId": callbackId
         ]
         if let watchRequestId {
             eventData["watchRequestId"] = watchRequestId
         }
-        plugin?.notifyListeners("messageReceivedWithReply", data: eventData)
+        plugin?.notifyWatchEvent("messageReceivedWithReply", data: eventData, retainUntilConsumed: true)
     }
-
-    // MARK: - Application context
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         CAPLog.print("[CapgoWatch] Received application context: \(applicationContext)")
-        plugin?.notifyListeners("applicationContextReceived", data: [
-            "context": applicationContext
+        plugin?.notifyWatchEvent("applicationContextReceived", data: [
+            "context": CapgoWatchMessageConverter.convertFromWatchMessage(applicationContext)
         ])
     }
 
-    // MARK: - User info
-
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         CAPLog.print("[CapgoWatch] Received user info: \(userInfo)")
-        plugin?.notifyListeners("userInfoReceived", data: [
-            "userInfo": userInfo
+        plugin?.notifyWatchEvent("userInfoReceived", data: [
+            "userInfo": CapgoWatchMessageConverter.convertFromWatchMessage(userInfo)
         ])
+    }
+}
+
+enum CapgoWatchConversionError: Error {
+    case nullValueNotSupported
+}
+
+enum CapgoWatchMessageConverter {
+    static func convertToWatchMessage(_ jsObject: JSObject) throws -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in jsObject {
+            result[key] = try convertJSValue(value)
+        }
+        return result
+    }
+
+    static func convertFromWatchMessage(_ message: [String: Any]) -> [String: Any] {
+        var result: [String: Any] = [:]
+        for (key, value) in message {
+            result[key] = convertWatchValue(value)
+        }
+        return result
+    }
+
+    /// Reject NSNull. WCSession property lists cannot carry null, and silently
+    /// dropping null array elements would shift indices.
+    private static func convertJSValue(_ value: Any) throws -> Any {
+        if value is NSNull {
+            throw CapgoWatchConversionError.nullValueNotSupported
+        }
+        if let dict = value as? JSObject {
+            return try convertToWatchMessage(dict)
+        } else if let array = value as? JSArray {
+            return try array.map { try convertJSValue($0) }
+        } else {
+            return value
+        }
+    }
+
+    private static func convertWatchValue(_ value: Any) -> Any {
+        if let dict = value as? [String: Any] {
+            return convertFromWatchMessage(dict)
+        } else if let array = value as? [Any] {
+            return array.map { convertWatchValue($0) }
+        } else {
+            return value
+        }
     }
 }

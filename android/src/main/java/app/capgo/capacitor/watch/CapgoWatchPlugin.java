@@ -1,6 +1,5 @@
 package app.capgo.capacitor.watch;
 
-import android.net.Uri;
 import android.util.Log;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -11,27 +10,21 @@ import com.google.android.gms.tasks.Tasks;
 import com.google.android.gms.wearable.CapabilityClient;
 import com.google.android.gms.wearable.CapabilityInfo;
 import com.google.android.gms.wearable.DataClient;
-import com.google.android.gms.wearable.DataEvent;
-import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.DataItem;
 import com.google.android.gms.wearable.DataItemBuffer;
-import com.google.android.gms.wearable.DataMap;
-import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.MessageClient;
-import com.google.android.gms.wearable.MessageEvent;
 import com.google.android.gms.wearable.Node;
+import com.google.android.gms.wearable.NodeClient;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.Wearable;
 import java.nio.charset.StandardCharsets;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -39,103 +32,76 @@ import org.json.JSONObject;
  * Wear OS communication plugin for Capacitor.
  * Provides bidirectional messaging between Android phone and Wear OS watch
  * using the Wear OS Data Layer API (play-services-wearable).
- *
- * <p>Message paths used over the Data Layer:</p>
- * <ul>
- *   <li>{@code /capgo/message} — regular one-way messages</li>
- *   <li>{@code /capgo/message/withreply} — messages that expect a reply</li>
- *   <li>{@code /capgo/reply/{callbackId}} — reply to a watch-initiated message</li>
- *   <li>{@code /capgo/context} — application context sync via DataItem</li>
- *   <li>{@code /capgo/userinfo/{uuid}} — queued user-info transfer via DataItem</li>
- * </ul>
  */
 @CapacitorPlugin(name = "CapgoWatch")
 public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
-    private static final String PLUGIN_VERSION = "8.1.19";
+    private static final String PLUGIN_VERSION = "8.1.23";
+    private static final long PENDING_REPLY_TTL_MS = CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS;
 
-    /** Capability advertised by the companion Wear OS app. */
-    static final String WATCH_APP_CAPABILITY = "capgo_watch";
+    private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;
 
-    /** Path for regular messages sent/received via MessageClient. */
-    static final String PATH_MESSAGE = "/capgo/message";
-    /** Path prefix for messages that require a reply. */
-    static final String PATH_MESSAGE_WITH_REPLY = "/capgo/message/withreply";
-    /** Path prefix for reply messages sent back to the watch. */
-    static final String PATH_REPLY = "/capgo/reply/";
-    /** DataItem path for application context sync. */
-    static final String PATH_CONTEXT = "/capgo/context";
-    /** DataItem path prefix for user info transfers. */
-    static final String PATH_USER_INFO = "/capgo/userinfo/";
+    private final ExecutorService executor;
 
-    /** Pending reply callbacks expire after 5 minutes. */
-    private static final long PENDING_REPLY_TTL_MS = 5 * 60 * 1000L;
+    public CapgoWatchPlugin() {
+        this(Executors.newCachedThreadPool());
+    }
 
-    private static final int LOCAL_NODE_LOOKUP_MAX_ATTEMPTS = 4;
-    private static final long LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS = 100L;
-    private static final long LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS = 2000L;
+    CapgoWatchPlugin(final ExecutorService executor) {
+        this.executor = executor;
+    }
 
-    private static final int PENDING_USER_INFO_SCAN_MAX_ATTEMPTS = 4;
-    private static final long PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS = 200L;
-    private static final long PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS = 2000L;
-
-    /** Maps callbackId to pending reply metadata. */
-    private final Map<String, PendingReply> pendingReplies = new ConcurrentHashMap<>();
-
-    /** URIs currently being delivered to avoid duplicate userInfoReceived events. */
-    private final Set<String> userInfoDeliveryClaims = ConcurrentHashMap.newKeySet();
-
-    /** URIs currently being delivered to avoid duplicate applicationContextReceived events. */
-    private final Set<String> contextDeliveryClaims = ConcurrentHashMap.newKeySet();
-
-    /** Shared thread pool for all background Wear OS operations. */
-    private final ExecutorService executor = Executors.newCachedThreadPool();
-
+    private CapgoWatchPendingReplyManager pendingReplyManager;
     private MessageClient messageClient;
     private DataClient dataClient;
+    private NodeClient nodeClient;
+    private CapabilityClient capabilityClient;
+    private CapgoWatchEventStore eventStore;
 
-    private volatile boolean pluginDestroyed;
+    private String watchCapability = CapgoWatchConstants.DEFAULT_CAPABILITY;
 
-    /** Cached Wear local node id; stable for the process lifetime. */
-    private volatile String cachedLocalNodeId;
-
-    private final MessageClient.OnMessageReceivedListener messageListener = this::handleMessageReceived;
-    private final DataClient.OnDataChangedListener dataListener = this::handleDataChanged;
-
-    private static final class PendingReply {
-
-        final String nodeId;
-        final long createdAt;
-        /** Echoed from the watch request payload when present (JSON value). */
-        final Object watchRequestEcho;
-
-        PendingReply(final String nodeId, final long createdAt, final Object watchRequestEcho) {
-            this.nodeId = nodeId;
-            this.createdAt = createdAt;
-            this.watchRequestEcho = watchRequestEcho;
-        }
-    }
+    private final CapabilityClient.OnCapabilityChangedListener capabilityChangedListener = (info) -> refreshReachability();
 
     @Override
     public void load() {
-        pluginDestroyed = false;
+        watchCapability = getConfig().getString("capability", CapgoWatchConstants.DEFAULT_CAPABILITY);
+        eventStore = new CapgoWatchEventStore(getContext());
+        CapgoWatchEventBridge.initialize(eventStore);
+        CapgoWatchEventBridge.registerPlugin(this);
+
         messageClient = Wearable.getMessageClient(getContext());
         dataClient = Wearable.getDataClient(getContext());
-        messageClient.addListener(messageListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register message listener", e));
-        dataClient.addListener(dataListener).addOnFailureListener((e) -> Log.e(TAG, "Failed to register data listener", e));
-        scanPendingUserInfoItems();
-        scanPendingContextItems();
+        nodeClient = Wearable.getNodeClient(getContext());
+        capabilityClient = Wearable.getCapabilityClient(getContext());
+
+        pendingReplyManager = new CapgoWatchPendingReplyManager(PENDING_REPLY_TTL_MS);
+        pendingReplyManager.initialize(messageClient, eventStore);
+        final CapgoWatchPendingReplyManager previousManager = activePendingReplyManager;
+        activePendingReplyManager = pendingReplyManager;
+        if (previousManager != null && previousManager != pendingReplyManager) {
+            previousManager.shutdown();
+        }
+
+        capabilityClient
+            .addListener(capabilityChangedListener, watchCapability)
+            .addOnFailureListener((e) -> Log.w(TAG, "Failed to register capability listener", e));
+
+        refreshReachability();
     }
 
     @Override
     protected void handleOnDestroy() {
-        pluginDestroyed = true;
-        if (messageClient != null) {
-            messageClient.removeListener(messageListener);
+        CapgoWatchEventBridge.unregisterPlugin(this);
+        if (capabilityClient != null) {
+            capabilityClient.removeListener(capabilityChangedListener, watchCapability);
         }
-        if (dataClient != null) {
-            dataClient.removeListener(dataListener);
+        if (pendingReplyManager != null) {
+            pendingReplyManager.shutdown();
+            if (activePendingReplyManager == pendingReplyManager) {
+                activePendingReplyManager = null;
+            }
+            pendingReplyManager = null;
         }
         executor.shutdown();
     }
@@ -145,389 +111,108 @@ public class CapgoWatchPlugin extends Plugin {
     public void addListener(final PluginCall call) {
         super.addListener(call);
         final String eventName = call.getString("eventName");
-        if ("userInfoReceived".equals(eventName)) {
-            scanPendingUserInfoItems();
-        }
-        if ("applicationContextReceived".equals(eventName)) {
-            scanPendingContextItems();
+        if (eventName != null) {
+            replayStoredEventsFor(eventName);
         }
     }
 
-    private void expirePendingReplies() {
-        final long now = System.currentTimeMillis();
-        final Iterator<Map.Entry<String, PendingReply>> iterator = pendingReplies.entrySet().iterator();
-        while (iterator.hasNext()) {
-            final Map.Entry<String, PendingReply> entry = iterator.next();
-            if (now - entry.getValue().createdAt > PENDING_REPLY_TTL_MS) {
-                iterator.remove();
-            }
-        }
+    boolean hasWatchListeners(final String eventName) {
+        return hasListeners(eventName);
     }
 
-    // ── Incoming message / data handlers ─────────────────────────────────────
-
-    private void handleMessageReceived(MessageEvent event) {
-        final String path = event.getPath();
-        if (!PATH_MESSAGE.equals(path) && !PATH_MESSAGE_WITH_REPLY.equals(path)) {
-            return;
-        }
-
-        expirePendingReplies();
-
-        final String nodeId = event.getSourceNodeId();
-        final String payload = new String(event.getData(), StandardCharsets.UTF_8);
-
-        try {
-            final JSONObject json = new JSONObject(payload);
-            final JSObject messageData = new JSObject(json.toString());
-
-            if (PATH_MESSAGE_WITH_REPLY.equals(path)) {
-                final String callbackId = UUID.randomUUID().toString();
-                final Object watchRequestEcho = json.has("watchRequestId") ? json.get("watchRequestId") : null;
-                pendingReplies.put(callbackId, new PendingReply(nodeId, System.currentTimeMillis(), watchRequestEcho));
-
-                final JSObject evt = new JSObject();
-                evt.put("message", messageData);
-                evt.put("callbackId", callbackId);
-                if (watchRequestEcho != null) {
-                    evt.put("watchRequestId", watchRequestEcho);
-                }
-                notifyListeners("messageReceivedWithReply", evt);
-            } else {
-                final JSObject evt = new JSObject();
-                evt.put("message", messageData);
-                notifyListeners("messageReceived", evt);
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error parsing received message", e);
-        }
-    }
-
-    private void handleDataChanged(DataEventBuffer dataEvents) {
-        for (DataEvent event : dataEvents) {
-            if (event.getType() != DataEvent.TYPE_CHANGED) {
-                continue;
-            }
-
-            final DataItem item = event.getDataItem();
-            final String path = item.getUri().getPath();
-            if (path == null) {
-                continue;
-            }
-
-            final boolean isContext = PATH_CONTEXT.equals(path);
-            final boolean isUserInfo = path.startsWith(PATH_USER_INFO);
-            if (!isContext && !isUserInfo) {
-                continue;
-            }
-
-            try {
-                final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                final String payload = dataMap.getString("payload", null);
-                if (payload == null) {
-                    continue;
-                }
-                final JSONObject json = new JSONObject(payload);
-                final JSObject data = new JSObject(json.toString());
-
-                if (isContext) {
-                    scheduleApplicationContextDelivery(item.getUri(), data);
-                } else {
-                    scheduleUserInfoDelivery(item, data);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Error processing data change", e);
-            }
-        }
-    }
-
-    private void scheduleApplicationContextDelivery(final Uri itemUri, final JSObject contextData) {
-        final String claimKey = itemUri + "#" + contextData.toString();
-        if (!contextDeliveryClaims.add(claimKey)) {
-            return;
-        }
-        executor.execute(() -> {
-            boolean bridgeTaskPosted = false;
-            try {
-                if (pluginDestroyed) {
-                    return;
-                }
-                String localId = cachedLocalNodeId;
-                if (localId == null) {
-                    localId = resolveLocalNodeIdWithRetry();
-                    if (localId == null) {
-                        schedulePendingContextScanRetry(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS);
-                        return;
-                    }
-                    cachedLocalNodeId = localId;
-                }
-                final String itemHost = itemUri.getHost();
-                if (itemHost != null && localId.equals(itemHost)) {
-                    return;
-                }
-                execute(() -> deliverApplicationContextFromRemote(itemUri, contextData, claimKey));
-                bridgeTaskPosted = true;
-            } finally {
-                if (!bridgeTaskPosted) {
-                    contextDeliveryClaims.remove(claimKey);
-                }
-            }
-        });
-    }
-
-    private void deliverApplicationContextFromRemote(final Uri itemUri, final JSObject contextData, final String claimKey) {
-        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
-            contextDeliveryClaims.remove(claimKey);
-            return;
-        }
-        final JSObject evt = new JSObject();
-        evt.put("context", contextData);
-        notifyListeners("applicationContextReceived", evt);
-        contextDeliveryClaims.remove(claimKey);
-    }
-
-    private void scanPendingContextItems() {
-        if (dataClient == null) {
-            return;
-        }
-        executor.execute(() -> scanPendingContextItemsAttempt(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS));
-    }
-
-    private void scanPendingContextItemsAttempt(final int attempt, final long backoffMs) {
-        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
-            return;
-        }
-        try {
-            final Uri uri = Uri.parse("wear://*" + PATH_CONTEXT);
-            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(uri, DataClient.FILTER_LITERAL));
-            try {
-                for (final DataItem item : buffer) {
-                    if (pluginDestroyed) {
-                        return;
-                    }
-                    final String path = item.getUri().getPath();
-                    if (path == null || !PATH_CONTEXT.equals(path)) {
-                        continue;
-                    }
-                    try {
-                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                        final String payload = dataMap.getString("payload", null);
-                        if (payload == null) {
-                            continue;
-                        }
-                        final JSONObject json = new JSONObject(payload);
-                        final JSObject data = new JSObject(json.toString());
-                        scheduleApplicationContextDelivery(item.getUri(), data);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error scanning pending context DataItem", e);
-                    }
-                }
-            } finally {
-                buffer.release();
-            }
-        } catch (ExecutionException | InterruptedException e) {
-            Log.w(TAG, "Failed to scan pending context DataItems", e);
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            schedulePendingContextScanRetry(attempt, backoffMs);
-        }
-    }
-
-    private void schedulePendingContextScanRetry(final int attempt, final long backoffMs) {
-        if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
-            return;
-        }
-        if (attempt + 1 >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
-            Log.w(TAG, "Context delivery pending scan exhausted retries");
-            return;
-        }
-        final int nextAttempt = attempt + 1;
-        final long nextBackoffMs = Math.min(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS);
-        executor.execute(() -> {
-            if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
-                return;
-            }
-            try {
-                Thread.sleep(backoffMs);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            if (pluginDestroyed || !hasListeners("applicationContextReceived")) {
-                return;
-            }
-            scanPendingContextItemsAttempt(nextAttempt, nextBackoffMs);
-        });
-    }
-
-    private void scheduleUserInfoDelivery(final DataItem item, final JSObject userInfoPayload) {
-        final Uri itemUri = item.getUri();
-        final String claimKey = itemUri.toString();
-        if (!userInfoDeliveryClaims.add(claimKey)) {
-            return;
-        }
-        final String itemHost = itemUri.getHost();
-        executor.execute(() -> {
-            boolean bridgeTaskPosted = false;
-            try {
-                if (pluginDestroyed) {
-                    return;
-                }
-                String localId = cachedLocalNodeId;
-                if (localId == null) {
-                    localId = resolveLocalNodeIdWithRetry();
-                    if (localId == null) {
-                        return;
-                    }
-                    cachedLocalNodeId = localId;
-                }
-                if (localId.equals(itemHost)) {
-                    return;
-                }
-                execute(() -> deliverUserInfoFromRemote(itemUri, userInfoPayload, claimKey));
-                bridgeTaskPosted = true;
-            } finally {
-                if (!bridgeTaskPosted) {
-                    userInfoDeliveryClaims.remove(claimKey);
-                }
-            }
-        });
-    }
-
-    private void deliverUserInfoFromRemote(final Uri itemUri, final JSObject userInfoPayload, final String claimKey) {
-        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
-            userInfoDeliveryClaims.remove(claimKey);
-            return;
-        }
-        final JSObject evt = new JSObject();
-        evt.put("userInfo", userInfoPayload);
-        notifyListeners("userInfoReceived", evt);
-        deleteDataItem(itemUri, () -> userInfoDeliveryClaims.remove(claimKey));
-    }
-
-    private void scanPendingUserInfoItems() {
-        if (dataClient == null) {
-            return;
-        }
-        executor.execute(() -> scanPendingUserInfoItemsAttempt(0, PENDING_USER_INFO_SCAN_INITIAL_BACKOFF_MS));
-    }
-
-    private void scanPendingUserInfoItemsAttempt(final int attempt, final long backoffMs) {
-        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
-            return;
-        }
-        try {
-            final Uri prefix = Uri.parse("wear://*" + PATH_USER_INFO);
-            final DataItemBuffer buffer = Tasks.await(dataClient.getDataItems(prefix, DataClient.FILTER_PREFIX));
-            try {
-                for (final DataItem item : buffer) {
-                    if (pluginDestroyed) {
-                        return;
-                    }
-                    final String path = item.getUri().getPath();
-                    if (path == null || !path.startsWith(PATH_USER_INFO)) {
-                        continue;
-                    }
-                    try {
-                        final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
-                        final String payload = dataMap.getString("payload", null);
-                        if (payload == null) {
-                            continue;
-                        }
-                        final JSONObject json = new JSONObject(payload);
-                        final JSObject data = new JSObject(json.toString());
-                        scheduleUserInfoDelivery(item, data);
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error scanning pending user info DataItem", e);
-                    }
-                }
-            } finally {
-                buffer.release();
-            }
-        } catch (ExecutionException | InterruptedException e) {
-            Log.w(TAG, "Failed to scan pending user info DataItems", e);
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            schedulePendingUserInfoScanRetry(attempt, backoffMs);
-        }
-    }
-
-    private void schedulePendingUserInfoScanRetry(final int attempt, final long backoffMs) {
-        if (pluginDestroyed || !hasListeners("userInfoReceived")) {
-            return;
-        }
-        if (attempt + 1 >= PENDING_USER_INFO_SCAN_MAX_ATTEMPTS) {
-            Log.w(TAG, "Pending user info scan exhausted retries");
-            return;
-        }
-        final int nextAttempt = attempt + 1;
-        final long nextBackoffMs = Math.min(backoffMs * 2, PENDING_USER_INFO_SCAN_MAX_BACKOFF_MS);
-        executor.execute(() -> {
-            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
-                return;
-            }
-            try {
-                Thread.sleep(backoffMs);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-            if (pluginDestroyed || !hasListeners("userInfoReceived")) {
-                return;
-            }
-            scanPendingUserInfoItemsAttempt(nextAttempt, nextBackoffMs);
-        });
+    void dispatchWatchEvent(final String eventName, final JSObject payload, final boolean retainUntilConsumed) {
+        notifyListeners(eventName, payload, retainUntilConsumed);
     }
 
     /**
-     * Resolves the local Wear node id, retrying transient {@link ExecutionException} failures.
+     * @return {@code true} when the pending-reply registration was accepted
      */
-    private String resolveLocalNodeIdWithRetry() {
-        long backoffMs = LOCAL_NODE_LOOKUP_INITIAL_BACKOFF_MS;
-        ExecutionException lastFailure = null;
-        for (int attempt = 0; attempt < LOCAL_NODE_LOOKUP_MAX_ATTEMPTS; attempt++) {
-            try {
-                return Tasks.await(Wearable.getNodeClient(getContext()).getLocalNode()).getId();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                Log.w(TAG, "Could not resolve local node for user info filter", e);
-                return null;
-            } catch (ExecutionException e) {
-                lastFailure = e;
-                if (attempt + 1 >= LOCAL_NODE_LOOKUP_MAX_ATTEMPTS) {
-                    break;
-                }
-                Log.w(TAG, "Local node lookup failed, retrying", e);
-                try {
-                    Thread.sleep(backoffMs);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    Log.w(TAG, "Could not resolve local node for user info filter", ie);
-                    return null;
-                }
-                backoffMs = Math.min(backoffMs * 2, LOCAL_NODE_LOOKUP_MAX_BACKOFF_MS);
-            }
-        }
-        Log.w(TAG, "Could not resolve local node for user info filter", lastFailure);
-        return null;
+    static boolean registerPendingReply(final String callbackId, final String nodeId) {
+        return registerPendingReply(callbackId, nodeId, null);
     }
 
-    private void deleteDataItem(final Uri uri, final Runnable onComplete) {
-        if (dataClient == null) {
-            onComplete.run();
+    static boolean registerPendingReply(final String callbackId, final String nodeId, final Object watchRequestEcho) {
+        final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
+        if (manager != null) {
+            return manager.registerIncoming(callbackId, nodeId, watchRequestEcho);
+        }
+        return CapgoWatchEventBridge.savePendingReply(callbackId, nodeId, watchRequestEcho);
+    }
+
+    static void handleIncomingReply(final String path, final byte[] data) {
+        final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
+        if (manager == null || !path.startsWith(CapgoWatchConstants.PATH_REPLY)) {
             return;
         }
-        dataClient
-            .deleteDataItems(uri)
-            .addOnFailureListener((e) -> Log.w(TAG, "Failed to delete delivered user info DataItem", e))
-            .addOnCompleteListener((task) -> onComplete.run());
+
+        final String callbackId = path.substring(CapgoWatchConstants.PATH_REPLY.length());
+        final CapgoWatchPendingReplyManager.OutgoingPendingReply pending = manager.removeOutgoing(callbackId);
+        if (pending == null) {
+            return;
+        }
+
+        try {
+            final String payload = new String(data, StandardCharsets.UTF_8);
+            final JSObject reply;
+            if (payload.isEmpty() || "{}".equals(payload)) {
+                reply = null;
+            } else {
+                reply = new JSObject(new JSONObject(payload).toString());
+            }
+
+            final JSObject result = new JSObject();
+            if (reply == null) {
+                result.put("reply", JSONObject.NULL);
+            } else {
+                result.put("reply", reply);
+            }
+            pending.call.resolve(result);
+        } catch (JSONException e) {
+            pending.call.reject("Failed to parse watch reply: " + e.getMessage(), e);
+        }
     }
 
-    // ── Plugin methods ────────────────────────────────────────────────────────
+    private void replayStoredEventsFor(final String eventName) {
+        final List<CapgoWatchEventStore.StoredEvent> storedEvents =
+            eventName == null ? eventStore.drainAll() : eventStore.drainEventsFor(eventName);
+        final Map<String, CapgoWatchEventStore.PendingReplyRecord> pendingReplies = eventStore.loadPendingReplies();
+
+        for (final CapgoWatchEventStore.StoredEvent storedEvent : storedEvents) {
+            if ("messageReceivedWithReply".equals(storedEvent.eventName) && storedEvent.replyNodeId != null) {
+                final String callbackId = storedEvent.payload.getString("callbackId", null);
+                if (callbackId == null) {
+                    continue;
+                }
+                final CapgoWatchEventStore.PendingReplyRecord record = pendingReplies.get(callbackId);
+                if (record == null) {
+                    Log.w(TAG, "Skipping replay of messageReceivedWithReply without durable pending reply callbackId=" + callbackId);
+                    continue;
+                }
+                if (pendingReplyManager != null) {
+                    final long createdAt = record.createdAt;
+                    if (System.currentTimeMillis() - createdAt > PENDING_REPLY_TTL_MS) {
+                        continue;
+                    }
+                    if (pendingReplyManager.getIncoming(callbackId) == null) {
+                        pendingReplyManager.restoreIncoming(callbackId, storedEvent.replyNodeId, createdAt, record.watchRequestEcho);
+                    }
+                }
+            }
+            dispatchWatchEvent(storedEvent.eventName, storedEvent.payload, true);
+        }
+    }
+
+    private void refreshReachability() {
+        runOnExecutor(() -> {
+            try {
+                final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
+                final boolean isReachable = !nodes.isEmpty();
+                CapgoWatchEventBridge.dispatchReachability(isReachable);
+            } catch (ExecutionException | InterruptedException e) {
+                Log.w(TAG, "Failed to determine reachability", e);
+            }
+        });
+    }
 
     @PluginMethod
     public void sendMessage(final PluginCall call) {
@@ -537,20 +222,81 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
-        executor.execute(() -> {
+        final boolean expectsReply = Boolean.TRUE.equals(call.getBoolean("expectsReply", false));
+
+        runOnExecutor(call, () -> {
+            final CapgoWatchPendingReplyManager manager = pendingReplyManager;
+            if (manager == null) {
+                call.reject("Watch plugin destroyed");
+                return;
+            }
+
+            String callbackId = null;
             try {
-                final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
+                final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 if (nodes.isEmpty()) {
                     call.reject("No connected Wear OS devices found");
                     return;
                 }
-                for (final Node node : nodes) {
-                    Tasks.await(messageClient.sendMessage(node.getId(), PATH_MESSAGE, payload));
+
+                if (expectsReply) {
+                    callbackId = UUID.randomUUID().toString();
+                    if (!manager.registerOutgoing(callbackId, call)) {
+                        return;
+                    }
+
+                    final JSONObject envelope = CapgoWatchMessagePayload.buildReplyEnvelope(callbackId, new JSONObject(data.toString()));
+                    final byte[] payload = envelope.toString().getBytes(StandardCharsets.UTF_8);
+
+                    // Send to every connected node; keep the callback if any send queues.
+                    boolean anySendSucceeded = false;
+                    Exception lastSendError = null;
+                    for (final Node node : nodes) {
+                        try {
+                            Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE_WITH_REPLY, payload));
+                            anySendSucceeded = true;
+                        } catch (ExecutionException | InterruptedException sendError) {
+                            lastSendError = sendError;
+                            Log.w(TAG, "Failed to send reply-message to node " + node.getId(), sendError);
+                            if (sendError instanceof InterruptedException) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    }
+                    if (!anySendSucceeded) {
+                        final String detail = lastSendError != null ? lastSendError.getMessage() : "unknown";
+                        manager.rejectOutgoing(callbackId, "Failed to send message: " + detail);
+                    }
+                } else {
+                    final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
+                    // Fan out to every connected node; reject if any send fails.
+                    Exception lastSendError = null;
+                    boolean anyFailed = false;
+                    for (final Node node : nodes) {
+                        try {
+                            Tasks.await(messageClient.sendMessage(node.getId(), CapgoWatchConstants.PATH_MESSAGE, payload));
+                        } catch (ExecutionException | InterruptedException sendError) {
+                            anyFailed = true;
+                            lastSendError = sendError;
+                            Log.w(TAG, "Failed to send message to node " + node.getId(), sendError);
+                            if (sendError instanceof InterruptedException) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
+                    }
+                    if (anyFailed) {
+                        final String detail = lastSendError != null ? lastSendError.getMessage() : "unknown";
+                        call.reject("Failed to send message: " + detail, lastSendError);
+                    } else {
+                        call.resolve();
+                    }
                 }
-                call.resolve();
-            } catch (ExecutionException | InterruptedException e) {
-                call.reject("Failed to send message: " + e.getMessage(), e);
+            } catch (ExecutionException | InterruptedException | JSONException e) {
+                if (callbackId != null) {
+                    manager.rejectOutgoing(callbackId, "Failed to send message: " + e.getMessage());
+                } else {
+                    call.reject("Failed to send message: " + e.getMessage(), e);
+                }
             }
         });
     }
@@ -563,9 +309,9 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
-                final PutDataMapRequest request = PutDataMapRequest.create(PATH_CONTEXT);
+                final PutDataMapRequest request = PutDataMapRequest.create(CapgoWatchConstants.PATH_CONTEXT);
                 request.getDataMap().putString("payload", context.toString());
                 request.setUrgent();
                 Tasks.await(dataClient.putDataItem(request.asPutDataRequest()));
@@ -584,8 +330,8 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        final String path = PATH_USER_INFO + UUID.randomUUID();
-        executor.execute(() -> {
+        final String path = CapgoWatchConstants.PATH_USER_INFO + UUID.randomUUID();
+        runOnExecutor(call, () -> {
             try {
                 final PutDataMapRequest request = PutDataMapRequest.create(path);
                 request.getDataMap().putString("payload", userInfo.toString());
@@ -612,36 +358,39 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        expirePendingReplies();
-
-        final PendingReply pendingReply = pendingReplies.get(callbackId);
+        final CapgoWatchPendingReplyManager manager = pendingReplyManager;
+        if (manager == null) {
+            call.reject("Watch plugin destroyed");
+            return;
+        }
+        final CapgoWatchPendingReplyManager.IncomingPendingReply pendingReply = manager.getIncoming(callbackId);
         if (pendingReply == null) {
             call.reject("No pending reply found for callbackId: " + callbackId);
             return;
         }
         if (System.currentTimeMillis() - pendingReply.createdAt > PENDING_REPLY_TTL_MS) {
-            pendingReplies.remove(callbackId);
+            manager.claimIncoming(callbackId);
             call.reject("Pending reply expired for callbackId: " + callbackId);
             return;
         }
 
         final String nodeId = pendingReply.nodeId;
-        byte[] payload;
+        final byte[] payload;
         try {
-            final JSONObject merged = new JSONObject(data.toString());
-            if (pendingReply.watchRequestEcho != null) {
+            final org.json.JSONObject merged = new org.json.JSONObject(data.toString());
+            if (CapgoWatchMessagePayload.isJsonSafeWatchRequestId(pendingReply.watchRequestEcho) && !merged.has("watchRequestId")) {
                 merged.put("watchRequestId", pendingReply.watchRequestEcho);
             }
             payload = merged.toString().getBytes(StandardCharsets.UTF_8);
-        } catch (JSONException e) {
+        } catch (org.json.JSONException e) {
             call.reject("Invalid reply data");
             return;
         }
-        final String replyPath = PATH_REPLY + callbackId;
-        executor.execute(() -> {
+        final String replyPath = CapgoWatchConstants.PATH_REPLY + callbackId;
+        runOnExecutor(call, () -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
-                pendingReplies.remove(callbackId);
+                manager.claimIncoming(callbackId);
                 call.resolve();
             } catch (ExecutionException | InterruptedException e) {
                 call.reject("Failed to send reply: " + e.getMessage(), e);
@@ -651,13 +400,12 @@ public class CapgoWatchPlugin extends Plugin {
 
     @PluginMethod
     public void getInfo(final PluginCall call) {
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
-                final List<Node> nodes = Tasks.await(Wearable.getNodeClient(getContext()).getConnectedNodes());
+                final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
-                final CapabilityClient capabilityClient = Wearable.getCapabilityClient(getContext());
                 final CapabilityInfo capabilityInfo = Tasks.await(
-                    capabilityClient.getCapability(WATCH_APP_CAPABILITY, CapabilityClient.FILTER_ALL)
+                    capabilityClient.getCapability(watchCapability, CapabilityClient.FILTER_ALL)
                 );
                 final boolean isWatchAppInstalled = !capabilityInfo.getNodes().isEmpty();
                 final JSObject ret = new JSObject();
@@ -668,7 +416,6 @@ public class CapgoWatchPlugin extends Plugin {
                 ret.put("activationState", isReachable ? 2 : 0);
                 call.resolve(ret);
             } catch (ExecutionException | InterruptedException e) {
-                // Wear OS API unavailable (e.g. Google Play Services missing)
                 final JSObject ret = new JSObject();
                 ret.put("isSupported", false);
                 ret.put("isPaired", false);
@@ -681,9 +428,73 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getReceivedState(final PluginCall call) {
+        runOnExecutor(call, () -> {
+            JSObject context = eventStore.loadLastContext();
+            if (context == null) {
+                DataItemBuffer buffer = null;
+                try {
+                    final String localNodeId = Tasks.await(nodeClient.getLocalNode()).getId();
+                    buffer = Tasks.await(dataClient.getDataItems(CapgoWatchConstants.contextDataItemUri()));
+                    for (final DataItem item : buffer) {
+                        final String host = item.getUri().getHost();
+                        if (host != null && host.equals(localNodeId)) {
+                            // Skip the phone's own outgoing context written by updateApplicationContext.
+                            continue;
+                        }
+                        final String payload = com.google.android.gms.wearable.DataMapItem.fromDataItem(item)
+                            .getDataMap()
+                            .getString("payload", "{}");
+                        context = new JSObject(new JSONObject(payload).toString());
+                        eventStore.saveLastContext(context);
+                        break;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Failed to load application context from Data Layer", e);
+                } finally {
+                    if (buffer != null) {
+                        buffer.release();
+                    }
+                }
+            }
+
+            final JSObject ret = new JSObject();
+            if (context == null) {
+                ret.put("context", JSONObject.NULL);
+            } else {
+                ret.put("context", context);
+            }
+            call.resolve(ret);
+        });
+    }
+
+    @PluginMethod
     public void getPluginVersion(final PluginCall call) {
         final JSObject ret = new JSObject();
         ret.put("version", PLUGIN_VERSION);
         call.resolve(ret);
+    }
+
+    void runOnExecutor(final Runnable work) {
+        if (executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.execute(work);
+        } catch (final RejectedExecutionException e) {
+            Log.w(TAG, "Skipped work after plugin destroyed", e);
+        }
+    }
+
+    void runOnExecutor(final PluginCall call, final Runnable work) {
+        if (executor.isShutdown()) {
+            call.reject("Watch plugin destroyed");
+            return;
+        }
+        try {
+            executor.execute(work);
+        } catch (final RejectedExecutionException e) {
+            call.reject("Watch plugin destroyed");
+        }
     }
 }
