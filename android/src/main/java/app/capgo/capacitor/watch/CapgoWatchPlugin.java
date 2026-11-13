@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -41,7 +42,16 @@ public class CapgoWatchPlugin extends Plugin {
 
     private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor;
+
+    public CapgoWatchPlugin() {
+        this(Executors.newCachedThreadPool());
+    }
+
+    CapgoWatchPlugin(final ExecutorService executor) {
+        this.executor = executor;
+    }
+
 
     private CapgoWatchPendingReplyManager pendingReplyManager;
     private MessageClient messageClient;
@@ -194,7 +204,7 @@ public class CapgoWatchPlugin extends Plugin {
     }
 
     private void refreshReachability() {
-        executor.execute(() -> {
+        runOnExecutor(() -> {
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
@@ -215,7 +225,7 @@ public class CapgoWatchPlugin extends Plugin {
 
         final boolean expectsReply = Boolean.TRUE.equals(call.getBoolean("expectsReply", false));
 
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             final CapgoWatchPendingReplyManager manager = pendingReplyManager;
             if (manager == null) {
                 call.reject("Watch plugin destroyed");
@@ -300,7 +310,7 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
 
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
                 final PutDataMapRequest request = PutDataMapRequest.create(CapgoWatchConstants.PATH_CONTEXT);
                 request.getDataMap().putString("payload", context.toString());
@@ -322,7 +332,7 @@ public class CapgoWatchPlugin extends Plugin {
         }
 
         final String path = CapgoWatchConstants.PATH_USER_INFO + UUID.randomUUID();
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
                 final PutDataMapRequest request = PutDataMapRequest.create(path);
                 request.getDataMap().putString("payload", userInfo.toString());
@@ -378,7 +388,7 @@ public class CapgoWatchPlugin extends Plugin {
             return;
         }
         final String replyPath = CapgoWatchConstants.PATH_REPLY + callbackId;
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
                 Tasks.await(messageClient.sendMessage(nodeId, replyPath, payload));
                 manager.claimIncoming(callbackId);
@@ -391,7 +401,7 @@ public class CapgoWatchPlugin extends Plugin {
 
     @PluginMethod
     public void getInfo(final PluginCall call) {
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             try {
                 final List<Node> nodes = Tasks.await(nodeClient.getConnectedNodes());
                 final boolean isReachable = !nodes.isEmpty();
@@ -420,7 +430,7 @@ public class CapgoWatchPlugin extends Plugin {
 
     @PluginMethod
     public void getReceivedState(final PluginCall call) {
-        executor.execute(() -> {
+        runOnExecutor(call, () -> {
             JSObject context = eventStore.loadLastContext();
             if (context == null) {
                 DataItemBuffer buffer = null;
@@ -464,5 +474,28 @@ public class CapgoWatchPlugin extends Plugin {
         final JSObject ret = new JSObject();
         ret.put("version", PLUGIN_VERSION);
         call.resolve(ret);
+    }
+
+    void runOnExecutor(final Runnable work) {
+        if (executor.isShutdown()) {
+            return;
+        }
+        try {
+            executor.execute(work);
+        } catch (final RejectedExecutionException e) {
+            Log.w(TAG, "Skipped work after plugin destroyed", e);
+        }
+    }
+
+    void runOnExecutor(final PluginCall call, final Runnable work) {
+        if (executor.isShutdown()) {
+            call.reject("Watch plugin destroyed");
+            return;
+        }
+        try {
+            executor.execute(work);
+        } catch (final RejectedExecutionException e) {
+            call.reject("Watch plugin destroyed");
+        }
     }
 }

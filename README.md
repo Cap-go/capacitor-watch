@@ -120,7 +120,7 @@ Methods and events below reflect the current **iOS** (`CapgoWatchPlugin.swift`),
 | `transferUserInfo` | Yes. Queued `transferUserInfo`. | Yes. DataItem path `/capgo/userinfo/{uuid}`, map key `payload`. | Throws `unavailable` |
 | `replyToMessage` | Yes. Completes the WatchConnectivity reply handler. | Yes. MessageClient path `/capgo/reply/{callbackId}` to the originating node. Pending replies expire after **5 minutes**. | Throws `unavailable` |
 | `getInfo` | Yes. WCSession pairing, install, reachability, activation. | Yes. Connected nodes, capability **`capgo_watch`**, `activationState` **2** if any node connected else **0**. Returns unsupported defaults if Play services fails. | Always unsupported defaults |
-| `getReceivedState` | Yes. Last `receivedApplicationContext`. | Yes. Last persisted application context DataItem. | Throws `unavailable` or returns empty defaults |
+| `getReceivedState` | Yes. Last `receivedApplicationContext`. | Yes. Last persisted application context DataItem. | Resolves `{ context: null }` |
 | `getPluginVersion` | Yes | Yes | Yes (`version: "web"`) |
 | `messageReceived` | Yes | Yes. Incoming `/capgo/message` (JSON body). | Listener API only; no events |
 | `messageReceivedWithReply` | Yes | Yes. Incoming `/capgo/message/withreply`; phone generates `callbackId`. | Listener API only; no events |
@@ -1111,7 +1111,7 @@ Use this for time-sensitive, interactive communication.
 
 **Returns:** <code>Promise&lt;<a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
-**Since:** 8.1.3
+**Since:** 8.2.0
 
 --------------------
 
@@ -1148,7 +1148,7 @@ Prefer the overloads above when `expectsReply` is a boolean literal.
 
 **Returns:** <code>Promise&lt;void | <a href="#sendmessageresult">SendMessageResult</a>&gt;</code>
 
-**Since:** 8.1.3
+**Since:** 8.2.0
 
 --------------------
 
@@ -1236,7 +1236,7 @@ Useful after app restart to restore watch-synced state without waiting for a new
 
 **Returns:** <code>Promise&lt;<a href="#receivedstate">ReceivedState</a>&gt;</code>
 
-**Since:** 8.1.3
+**Since:** 8.2.0
 
 --------------------
 
@@ -1418,7 +1418,7 @@ Options for sending a message to the watch.
 | Prop               | Type                                                          | Description                                                                                                                     | Default            | Since |
 | ------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----- |
 | **`data`**         | <code><a href="#watchmessagedata">WatchMessageData</a></code> | The data to send to the watch. Must be serializable (string, number, boolean, arrays, or nested objects).                       |                    |       |
-| **`expectsReply`** | <code>boolean</code>                                          | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). | <code>false</code> | 8.1.3 |
+| **`expectsReply`** | <code>boolean</code>                                          | When true, wait for a reply from the watch and resolve with `{ reply }`. When false or omitted, send without waiting (default). | <code>false</code> | 8.2.0 |
 
 
 #### UpdateContextOptions
@@ -1556,9 +1556,7 @@ WatchConnectivity uses Foundation types; `null` becomes `NSNull`, which the sess
 
 Construct a type with a set of properties K of type T
 
-<code>{
- [P in K]: T;
- }</code>
+<code>{ [P in K]: T; }</code>
 
 </docgen-api>
 

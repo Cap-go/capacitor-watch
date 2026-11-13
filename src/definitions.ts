@@ -33,7 +33,7 @@ export interface SendMessageOptions {
    * When false or omitted, send without waiting (default).
    *
    * @default false
-   * @since 8.1.3
+   * @since 8.2.0
    */
   expectsReply?: boolean;
 }
@@ -41,7 +41,7 @@ export interface SendMessageOptions {
 /**
  * Options for sending a message that expects a reply from the watch.
  *
- * @since 8.1.3
+ * @since 8.2.0
  */
 export interface SendMessageOptionsWithReply extends SendMessageOptions {
   data: WatchMessageData;
@@ -54,7 +54,7 @@ export interface SendMessageOptionsWithReply extends SendMessageOptions {
 /**
  * Result returned when `sendMessage` is called with `expectsReply: true`.
  *
- * @since 8.1.3
+ * @since 8.2.0
  */
 export interface SendMessageResult {
   /**
@@ -66,7 +66,7 @@ export interface SendMessageResult {
 /**
  * Last persisted application context received from the watch.
  *
- * @since 8.1.3
+ * @since 8.2.0
  */
 export interface ReceivedState {
   /**
@@ -87,7 +87,7 @@ export interface ReceivedState {
  * },
  * ```
  *
- * @since 8.1.3
+ * @since 8.2.0
  */
 export interface CapgoWatchPluginConfig {
   /**
@@ -103,7 +103,7 @@ declare module '@capacitor/cli' {
     /**
      * Configuration for the CapgoWatch plugin.
      *
-     * @since 8.1.3
+     * @since 8.2.0
      */
     CapgoWatch?: CapgoWatchPluginConfig;
   }
@@ -296,7 +296,7 @@ export interface CapgoWatchPlugin {
    * @param options - The message options
    * @returns Promise that resolves when the message is sent
    * @throws Error if the watch is not reachable or session is not active
-   * @since 8.1.3
+   * @since 8.2.0
    * @example
    * ```typescript
    * await CapgoWatch.sendMessage({
@@ -324,7 +324,7 @@ export interface CapgoWatchPlugin {
    *
    * @param options - The message options
    * @returns Promise that resolves with a reply when `expectsReply` is true at runtime
-   * @since 8.1.3
+   * @since 8.2.0
    */
   sendMessage(options: SendMessageOptions): Promise<void | SendMessageResult>;
 
@@ -406,7 +406,7 @@ export interface CapgoWatchPlugin {
    * Useful after app restart to restore watch-synced state without waiting for a new event.
    *
    * @returns Promise that resolves with the last received context
-   * @since 8.1.3
+   * @since 8.2.0
    * @example
    * ```typescript
    * const { context } = await CapgoWatch.getReceivedState();
