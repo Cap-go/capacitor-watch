@@ -101,4 +101,21 @@ public class CapgoWatchPendingReplyManagerTest {
         assertFalse(eventStore.loadPendingReplies().containsKey("callback-new"));
         assertTrue(eventStore.loadPendingReplies().containsKey("callback-0"));
     }
+
+    @Test
+    public void registerIncomingKeepsWatchRequestEchoAcrossRestore() {
+        assertTrue(manager.registerIncoming("callback-echo", "node-echo", "req-42"));
+        final CapgoWatchPendingReplyManager.IncomingPendingReply live = manager.getIncoming("callback-echo");
+        assertNotNull(live);
+        assertEquals("req-42", live.watchRequestEcho);
+
+        manager.shutdown();
+        manager = new CapgoWatchPendingReplyManager(300_000L);
+        manager.initialize(null, eventStore);
+
+        final CapgoWatchPendingReplyManager.IncomingPendingReply restored = manager.getIncoming("callback-echo");
+        assertNotNull(restored);
+        assertEquals("node-echo", restored.nodeId);
+        assertEquals("req-42", restored.watchRequestEcho);
+    }
 }

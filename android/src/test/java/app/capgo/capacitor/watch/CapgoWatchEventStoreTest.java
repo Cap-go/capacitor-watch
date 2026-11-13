@@ -264,4 +264,13 @@ public class CapgoWatchEventStoreTest {
         // After clear, the same transition can be recorded again.
         assertTrue(store.saveLastReachableIfChanged(true));
     }
+
+    @Test
+    public void savePendingReplyPersistsWatchRequestId() {
+        assertTrue(store.savePendingReply("callback-1", "node-1", "req-99"));
+        final CapgoWatchEventStore.PendingReplyRecord record = store.loadPendingReplies().get("callback-1");
+        assertNotNull(record);
+        assertEquals("node-1", record.nodeId);
+        assertEquals("req-99", record.watchRequestEcho);
+    }
 }

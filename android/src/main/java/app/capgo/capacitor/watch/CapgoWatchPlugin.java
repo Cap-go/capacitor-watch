@@ -36,7 +36,7 @@ import org.json.JSONObject;
 public class CapgoWatchPlugin extends Plugin {
 
     private static final String TAG = "CapgoWatchPlugin";
-    private static final String PLUGIN_VERSION = "8.1.19";
+    private static final String PLUGIN_VERSION = "8.1.23";
     private static final long PENDING_REPLY_TTL_MS = CapgoWatchConstants.MAX_PENDING_REPLY_AGE_MS;
 
     private static volatile CapgoWatchPendingReplyManager activePendingReplyManager;
@@ -119,11 +119,15 @@ public class CapgoWatchPlugin extends Plugin {
      * @return {@code true} when the pending-reply registration was accepted
      */
     static boolean registerPendingReply(final String callbackId, final String nodeId) {
+        return registerPendingReply(callbackId, nodeId, null);
+    }
+
+    static boolean registerPendingReply(final String callbackId, final String nodeId, final Object watchRequestEcho) {
         final CapgoWatchPendingReplyManager manager = activePendingReplyManager;
         if (manager != null) {
-            return manager.registerIncoming(callbackId, nodeId);
+            return manager.registerIncoming(callbackId, nodeId, watchRequestEcho);
         }
-        return CapgoWatchEventBridge.savePendingReply(callbackId, nodeId);
+        return CapgoWatchEventBridge.savePendingReply(callbackId, nodeId, watchRequestEcho);
     }
 
     static void handleIncomingReply(final String path, final byte[] data) {
@@ -181,7 +185,7 @@ public class CapgoWatchPlugin extends Plugin {
                         continue;
                     }
                     if (pendingReplyManager.getIncoming(callbackId) == null) {
-                        pendingReplyManager.restoreIncoming(callbackId, storedEvent.replyNodeId, createdAt);
+                        pendingReplyManager.restoreIncoming(callbackId, storedEvent.replyNodeId, createdAt, record.watchRequestEcho);
                     }
                 }
             }
@@ -362,7 +366,17 @@ public class CapgoWatchPlugin extends Plugin {
         }
 
         final String nodeId = pendingReply.nodeId;
-        final byte[] payload = data.toString().getBytes(StandardCharsets.UTF_8);
+        final byte[] payload;
+        try {
+            final org.json.JSONObject merged = new org.json.JSONObject(data.toString());
+            if (CapgoWatchMessagePayload.isJsonSafeWatchRequestId(pendingReply.watchRequestEcho) && !merged.has("watchRequestId")) {
+                merged.put("watchRequestId", pendingReply.watchRequestEcho);
+            }
+            payload = merged.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (org.json.JSONException e) {
+            call.reject("Invalid reply data");
+            return;
+        }
         final String replyPath = CapgoWatchConstants.PATH_REPLY + callbackId;
         executor.execute(() -> {
             try {

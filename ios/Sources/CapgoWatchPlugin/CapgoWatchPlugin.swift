@@ -6,7 +6,7 @@ import WatchConnectivity
 /// here: https://capacitorjs.com/docs/plugins/ios
 @objc(CapgoWatchPlugin)
 public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
-    private let pluginVersion: String = "8.1.19"
+    private let pluginVersion: String = "8.1.23"
     public let identifier = "CapgoWatchPlugin"
     public let jsName = "CapgoWatch"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -20,7 +20,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     private var sessionDelegate: WatchSessionDelegate?
-    private var pendingReplies: [String: ([String: Any]) -> Void] = [:]
+    private var pendingReplies: [String: (watchRequestId: Any?, handler: ([String: Any]) -> Void)] = [:]
     private var pendingReplyTimers: [String: DispatchWorkItem] = [:]
     private let replyLock = NSLock()
     private let pendingReplyTtlSeconds: TimeInterval = 5 * 60
@@ -167,16 +167,20 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         replyLock.lock()
-        let replyHandler = pendingReplies.removeValue(forKey: callbackId)
+        let pending = pendingReplies.removeValue(forKey: callbackId)
         pendingReplyTimers.removeValue(forKey: callbackId)?.cancel()
         replyLock.unlock()
 
-        guard let handler = replyHandler else {
+        guard let pending else {
             call.reject("Invalid or expired callbackId")
             return
         }
 
-        handler(replyData)
+        var finalReply = replyData
+        if let watchRequestId = pending.watchRequestId, finalReply["watchRequestId"] == nil {
+            finalReply["watchRequestId"] = watchRequestId
+        }
+        pending.handler(finalReply)
         call.resolve()
     }
 
@@ -224,9 +228,13 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     // MARK: - Internal methods for delegate
 
-    func storePendingReply(callbackId: String, handler: @escaping ([String: Any]) -> Void) {
+    func storePendingReply(
+        callbackId: String,
+        watchRequestId: Any? = nil,
+        handler: @escaping ([String: Any]) -> Void
+    ) {
         replyLock.lock()
-        pendingReplies[callbackId] = handler
+        pendingReplies[callbackId] = (watchRequestId: watchRequestId, handler: handler)
         pendingReplyTimers[callbackId]?.cancel()
 
         let workItem = DispatchWorkItem { [weak self] in
@@ -240,11 +248,11 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     func expirePendingReply(callbackId: String) {
         replyLock.lock()
-        let replyHandler = pendingReplies.removeValue(forKey: callbackId)
+        let pending = pendingReplies.removeValue(forKey: callbackId)
         pendingReplyTimers.removeValue(forKey: callbackId)
         replyLock.unlock()
 
-        replyHandler?([:])
+        pending?.handler([:])
     }
 
     func notifyWatchEvent(_ eventName: String, data: [String: Any], retainUntilConsumed: Bool = true) {
@@ -253,7 +261,7 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
 
     deinit {
         replyLock.lock()
-        let handlers = pendingReplies
+        let pending = pendingReplies
         pendingReplies.removeAll()
         for (_, task) in pendingReplyTimers {
             task.cancel()
@@ -261,8 +269,8 @@ public class CapgoWatchPlugin: CAPPlugin, CAPBridgedPlugin {
         pendingReplyTimers.removeAll()
         replyLock.unlock()
 
-        for (_, handler) in handlers {
-            handler([:])
+        for (_, entry) in pending {
+            entry.handler([:])
         }
     }
 }
@@ -323,12 +331,17 @@ class WatchSessionDelegate: NSObject, WCSessionDelegate {
     ) {
         CAPLog.print("[CapgoWatch] Received message with reply: \(message)")
         let callbackId = UUID().uuidString
+        let watchRequestId = message["watchRequestId"]
 
-        plugin?.storePendingReply(callbackId: callbackId, handler: replyHandler)
-        plugin?.notifyWatchEvent("messageReceivedWithReply", data: [
+        plugin?.storePendingReply(callbackId: callbackId, watchRequestId: watchRequestId, handler: replyHandler)
+        var eventData: [String: Any] = [
             "message": CapgoWatchMessageConverter.convertFromWatchMessage(message),
             "callbackId": callbackId
-        ], retainUntilConsumed: true)
+        ]
+        if let watchRequestId {
+            eventData["watchRequestId"] = watchRequestId
+        }
+        plugin?.notifyWatchEvent("messageReceivedWithReply", data: eventData, retainUntilConsumed: true)
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

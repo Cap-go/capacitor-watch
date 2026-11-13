@@ -21,7 +21,7 @@
     "@capacitor/splash-screen": "^8.0.0"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
+    "@capacitor/assets": "^4.0.0",
     "@capacitor/cli": "^8.5.2",
     "vite": "^8.3.0",
     "typescript": "^6.0.3"

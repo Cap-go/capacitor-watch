@@ -2,6 +2,7 @@ package app.capgo.capacitor.watch;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.getcapacitor.JSObject;
@@ -42,5 +43,23 @@ public class CapgoWatchMessagePayloadTest {
         final JSObject message = CapgoWatchMessagePayload.toMessageData(json);
         assertEquals("ping", message.getString("action"));
         assertEquals("abc", message.getString("callbackId"));
+    }
+
+    @Test
+    public void parseReplyEnvelopeReadsWatchRequestIdFromEnvelopeOrData() throws Exception {
+        final CapgoWatchMessagePayload.ReplyEnvelope topLevel = CapgoWatchMessagePayload.parseReplyEnvelope(
+            new JSONObject("{\"callbackId\":\"abc\",\"watchRequestId\":\"req-1\",\"data\":{\"ok\":true}}")
+        );
+        assertEquals("req-1", topLevel.watchRequestId);
+
+        final CapgoWatchMessagePayload.ReplyEnvelope inData = CapgoWatchMessagePayload.parseReplyEnvelope(
+            new JSONObject("{\"callbackId\":\"abc\",\"data\":{\"ok\":true,\"watchRequestId\":7}}")
+        );
+        assertEquals(7, inData.watchRequestId);
+
+        final CapgoWatchMessagePayload.ReplyEnvelope missing = CapgoWatchMessagePayload.parseReplyEnvelope(
+            new JSONObject("{\"callbackId\":\"abc\",\"data\":{\"ok\":true}}")
+        );
+        assertNull(missing.watchRequestId);
     }
 }

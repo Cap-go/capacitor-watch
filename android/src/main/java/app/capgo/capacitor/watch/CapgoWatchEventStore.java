@@ -201,6 +201,10 @@ public class CapgoWatchEventStore {
      * @return {@code true} when the registration was persisted
      */
     public boolean savePendingReply(final String callbackId, final String nodeId) {
+        return savePendingReply(callbackId, nodeId, null);
+    }
+
+    public boolean savePendingReply(final String callbackId, final String nodeId, final Object watchRequestEcho) {
         synchronized (STORE_LOCK) {
             final JSONObject pending = readPendingRepliesObject();
             try {
@@ -219,6 +223,9 @@ public class CapgoWatchEventStore {
                 final JSONObject entry = new JSONObject();
                 entry.put("nodeId", nodeId);
                 entry.put("createdAt", System.currentTimeMillis());
+                if (CapgoWatchMessagePayload.isJsonSafeWatchRequestId(watchRequestEcho)) {
+                    entry.put("watchRequestId", watchRequestEcho);
+                }
                 pending.put(callbackId, entry);
                 if (!preferences.edit().putString(KEY_PENDING_REPLIES, pending.toString()).commit()) {
                     Log.w(TAG, "Failed to commit pending reply for " + callbackId);
@@ -265,7 +272,14 @@ public class CapgoWatchEventStore {
                 final String callbackId = keys.next();
                 try {
                     final JSONObject entry = pending.getJSONObject(callbackId);
-                    records.put(callbackId, new PendingReplyRecord(entry.getString("nodeId"), entry.getLong("createdAt")));
+                    records.put(
+                        callbackId,
+                        new PendingReplyRecord(
+                            entry.getString("nodeId"),
+                            entry.getLong("createdAt"),
+                            entry.has("watchRequestId") ? entry.get("watchRequestId") : null
+                        )
+                    );
                 } catch (JSONException e) {
                     Log.w(TAG, "Skipping unreadable pending reply for " + callbackId, e);
                 }
@@ -509,10 +523,16 @@ public class CapgoWatchEventStore {
 
         public final String nodeId;
         public final long createdAt;
+        public final Object watchRequestEcho;
 
         PendingReplyRecord(final String nodeId, final long createdAt) {
+            this(nodeId, createdAt, null);
+        }
+
+        PendingReplyRecord(final String nodeId, final long createdAt, final Object watchRequestEcho) {
             this.nodeId = nodeId;
             this.createdAt = createdAt;
+            this.watchRequestEcho = watchRequestEcho;
         }
     }
 }

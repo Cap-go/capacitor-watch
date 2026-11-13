@@ -66,17 +66,25 @@ final class CapgoWatchPendingReplyManager {
      *         settle the watch and suppress {@code messageReceivedWithReply})
      */
     boolean registerIncoming(final String callbackId, final String nodeId) {
-        if (eventStore != null && !eventStore.savePendingReply(callbackId, nodeId)) {
+        return registerIncoming(callbackId, nodeId, null);
+    }
+
+    boolean registerIncoming(final String callbackId, final String nodeId, final Object watchRequestEcho) {
+        if (eventStore != null && !eventStore.savePendingReply(callbackId, nodeId, watchRequestEcho)) {
             Log.w(TAG, "Rejecting incoming reply callbackId=" + callbackId + " at pending-reply capacity");
             return false;
         }
-        incoming.put(callbackId, new IncomingPendingReply(nodeId, System.currentTimeMillis()));
+        incoming.put(callbackId, new IncomingPendingReply(nodeId, System.currentTimeMillis(), watchRequestEcho));
         scheduleIncomingExpiry(callbackId);
         return true;
     }
 
     void restoreIncoming(final String callbackId, final String nodeId, final long createdAt) {
-        incoming.put(callbackId, new IncomingPendingReply(nodeId, createdAt));
+        restoreIncoming(callbackId, nodeId, createdAt, null);
+    }
+
+    void restoreIncoming(final String callbackId, final String nodeId, final long createdAt, final Object watchRequestEcho) {
+        incoming.put(callbackId, new IncomingPendingReply(nodeId, createdAt, watchRequestEcho));
         scheduleIncomingExpiry(callbackId, createdAt);
     }
 
@@ -131,7 +139,7 @@ final class CapgoWatchPendingReplyManager {
             return;
         }
         for (final Map.Entry<String, CapgoWatchEventStore.PendingReplyRecord> entry : eventStore.loadPendingReplies().entrySet()) {
-            restoreIncoming(entry.getKey(), entry.getValue().nodeId, entry.getValue().createdAt);
+            restoreIncoming(entry.getKey(), entry.getValue().nodeId, entry.getValue().createdAt, entry.getValue().watchRequestEcho);
         }
     }
 
@@ -213,10 +221,16 @@ final class CapgoWatchPendingReplyManager {
 
         final String nodeId;
         final long createdAt;
+        final Object watchRequestEcho;
 
         IncomingPendingReply(final String nodeId, final long createdAt) {
+            this(nodeId, createdAt, null);
+        }
+
+        IncomingPendingReply(final String nodeId, final long createdAt, final Object watchRequestEcho) {
             this.nodeId = nodeId;
             this.createdAt = createdAt;
+            this.watchRequestEcho = watchRequestEcho;
         }
     }
 

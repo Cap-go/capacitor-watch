@@ -36,8 +36,12 @@ public final class CapgoWatchEventBridge {
      *         {@code false} when rejected at capacity
      */
     public static boolean savePendingReply(final String callbackId, final String nodeId) {
+        return savePendingReply(callbackId, nodeId, null);
+    }
+
+    public static boolean savePendingReply(final String callbackId, final String nodeId, final Object watchRequestEcho) {
         if (eventStore != null) {
-            return eventStore.savePendingReply(callbackId, nodeId);
+            return eventStore.savePendingReply(callbackId, nodeId, watchRequestEcho);
         }
         // No durable queue — accept, matching PendingReplyManager when eventStore is null.
         return true;
